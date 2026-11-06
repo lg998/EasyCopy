@@ -89,6 +89,8 @@ class SiteApiClient {
   final SearchEndpointResolver _searchEndpointResolver;
   static const int _searchPageSize = 12;
   static const int _profilePageSize = 20;
+  static const int _rankPageSize = 30;
+  static const int _rankMaxItems = 200;
 
   Future<SiteLoginResult> login({
     required String username,
@@ -195,6 +197,34 @@ class SiteApiClient {
       collectionsTotal: collectionsPayload.total,
       historyTotal: historyPayload.total,
       continueReading: history.isEmpty ? null : history.first,
+    );
+  }
+
+  Future<({List<ProfileLibraryItem> items, PagerData pager, int total})>
+  loadCollectionsPage({
+    required int page,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
+  }) async {
+    await _session.ensureInitialized();
+    final int generation = _session.generation;
+    if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+      throw SiteApiException('请先登录后再查看收藏。');
+    }
+    final ProfileCollectionSort effectiveSort = _serverCollectionSort(
+      collectionSort,
+    );
+    final _PagedProfileSection section = await _getPagedList(
+      '/api/v3/member/collect/comics',
+      view: ProfileSubview.collections,
+      page: page,
+      collectionSort: effectiveSort,
+    );
+    _checkSessionGeneration(generation);
+    return (
+      items: _parseCollections(section.items, sort: effectiveSort),
+      pager: section.pager,
+      total: section.total,
     );
   }
 
@@ -401,6 +431,181 @@ class SiteApiClient {
             : '',
       ),
     );
+  }
+
+  Future<RankPageData> loadRankPage({required Uri uri}) async {
+    await _session.ensureInitialized();
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
+    final String rawAudience =
+        (targetUri.queryParameters['type'] ??
+                targetUri.queryParameters['audience_type'] ??
+                '')
+            .trim()
+            .toLowerCase();
+    final String audienceType = rawAudience == 'female' ? 'female' : 'male';
+    final String rawDateType =
+        (targetUri.queryParameters['table'] ??
+                targetUri.queryParameters['date_type'] ??
+                '')
+            .trim()
+            .toLowerCase();
+    final String dateType = switch (rawDateType) {
+      'week' => 'week',
+      'month' => 'month',
+      'total' => 'total',
+      _ => 'day',
+    };
+
+    final (:results, :host) = await _getRankJson(
+      audienceType: audienceType,
+      dateType: dateType,
+      offset: 0,
+      limit: _rankPageSize,
+    );
+    final List<Map<String, Object?>> firstBatch = _extractList(results);
+    final int total = pickInt(results, const <String>[
+      'total',
+      'count',
+      'total_count',
+    ], fallback: _rankMaxItems);
+    final int targetCount = min(
+      total > 0 ? total : _rankMaxItems,
+      _rankMaxItems,
+    );
+    final List<int> remainingOffsets = <int>[
+      for (
+        int offset = _rankPageSize;
+        offset < targetCount;
+        offset += _rankPageSize
+      )
+        offset,
+    ];
+    final List<List<Map<String, Object?>>> remainingBatches =
+        remainingOffsets.isEmpty
+        ? const <List<Map<String, Object?>>>[]
+        : await Future.wait<List<Map<String, Object?>>>(
+            remainingOffsets.map((int offset) async {
+              final (:results, host: _) = await _getRankJson(
+                audienceType: audienceType,
+                dateType: dateType,
+                offset: offset,
+                limit: _rankPageSize,
+                preferredHost: host,
+              );
+              return _extractList(results);
+            }),
+          );
+
+    final List<RankEntryData> items = <RankEntryData>[];
+    final Set<String> seenHrefs = <String>{};
+    int fallbackRank = 1;
+    for (final List<Map<String, Object?>> batch in <List<Map<String, Object?>>>[
+      firstBatch,
+      ...remainingBatches,
+    ]) {
+      for (final Map<String, Object?> rawItem in batch) {
+        final RankEntryData entry = _parseRankEntry(
+          rawItem,
+          fallbackRank: fallbackRank,
+        );
+        fallbackRank += 1;
+        if (entry.title.isEmpty ||
+            entry.href.isEmpty ||
+            !seenHrefs.add(entry.href)) {
+          continue;
+        }
+        items.add(entry);
+        if (items.length >= _rankMaxItems) {
+          break;
+        }
+      }
+      if (items.length >= _rankMaxItems) {
+        break;
+      }
+    }
+
+    if (items.isEmpty) {
+      throw SiteApiException('排行榜暂时没有可展示的内容。');
+    }
+
+    return RankPageData(
+      title: _rankPageTitle(dateType),
+      uri: targetUri.toString(),
+      categories: _buildRankCategories(
+        audienceType: audienceType,
+        dateType: dateType,
+      ),
+      periods: _buildRankPeriods(
+        audienceType: audienceType,
+        dateType: dateType,
+      ),
+      items: items,
+    );
+  }
+
+  Future<({Map<String, Object?> results, String host})> _getRankJson({
+    required String audienceType,
+    required String dateType,
+    required int offset,
+    required int limit,
+    String? preferredHost,
+  }) async {
+    final List<String> baseHosts = _chapterCommentApiHosts();
+    final List<String> hosts =
+        preferredHost == null || preferredHost.trim().isEmpty
+        ? baseHosts
+        : <String>[
+            preferredHost,
+            ...baseHosts.where((String host) => host != preferredHost),
+          ];
+    final Map<String, String> queryParameters = <String, String>{
+      'limit': '$limit',
+      'offset': '$offset',
+      'date_type': dateType,
+      'type': '1',
+      'audience_type': audienceType,
+      '_update': 'true',
+    };
+
+    Object? lastError;
+    for (final String host in hosts) {
+      final Uri uri = Uri.https(host, '/api/v3/ranks', queryParameters);
+      try {
+        final http.Response response = await NetworkClient.get(
+          _client,
+          uri,
+          headers: _buildRequestHeaders(includeSiteContext: true),
+          maxRetries: 0,
+          label: 'api.ranks',
+        );
+        final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+        if (payload == null) {
+          lastError = SiteApiException('排行榜接口返回格式异常。');
+          continue;
+        }
+        final int code =
+            (payload['code'] as num?)?.toInt() ?? response.statusCode;
+        if (code != 200) {
+          lastError = SiteApiException(
+            (payload['message'] as String?) ?? '排行榜加载失败：$code',
+          );
+          continue;
+        }
+        final Map<String, Object?> results = asStringKeyMap(payload['results']);
+        if (results['list'] is! List) {
+          lastError = SiteApiException('排行榜列表格式异常。');
+          continue;
+        }
+        return (results: results, host: host);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError is SiteApiException) {
+      throw lastError;
+    }
+    throw SiteApiException('排行榜加载失败，请稍后重试。');
   }
 
   Future<Map<String, Object?>> _getJson(
@@ -776,10 +981,13 @@ class SiteApiClient {
         AppConfig.defaultProfileCollectionSort,
   }) async {
     final int normalizedPage = page < 1 ? 1 : page;
-    final int offset = (normalizedPage - 1) * _profilePageSize;
+    final int requestedPageSize = view == ProfileSubview.collections
+        ? 21
+        : _profilePageSize;
+    final int offset = (normalizedPage - 1) * requestedPageSize;
     final Map<String, String> queryParameters = <String, String>{
       'offset': '$offset',
-      'limit': '$_profilePageSize',
+      'limit': '$requestedPageSize',
     };
     if (view == ProfileSubview.collections) {
       queryParameters.addAll(<String, String>{
@@ -804,8 +1012,8 @@ class SiteApiClient {
       'limit',
       'page_size',
       'pageSize',
-    ], fallback: _profilePageSize);
-    final int effectiveLimit = limit <= 0 ? _profilePageSize : limit;
+    ], fallback: requestedPageSize);
+    final int effectiveLimit = limit <= 0 ? requestedPageSize : limit;
     final int totalPages = total <= 0
         ? 1
         : ((total + effectiveLimit - 1) / effectiveLimit).floor();

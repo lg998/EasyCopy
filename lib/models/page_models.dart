@@ -471,9 +471,12 @@ class ProfileLibraryItem {
     required this.title,
     required this.coverUrl,
     required this.href,
+    this.comicId = '',
     this.subtitle = '',
     this.secondaryText = '',
     this.updatedAt = '',
+    this.lastChapterId = '',
+    this.lastBrowseChapterId = '',
   });
 
   factory ProfileLibraryItem.fromJson(Map<String, Object?> json) {
@@ -481,27 +484,36 @@ class ProfileLibraryItem {
       title: _stringValue(json['title']),
       coverUrl: _stringValue(json['coverUrl']),
       href: _stringValue(json['href']),
+      comicId: _stringValue(json['comicId']),
       subtitle: _stringValue(json['subtitle']),
       secondaryText: _stringValue(json['secondaryText']),
       updatedAt: _stringValue(json['updatedAt']),
+      lastChapterId: _stringValue(json['lastChapterId']),
+      lastBrowseChapterId: _stringValue(json['lastBrowseChapterId']),
     );
   }
 
   final String title;
   final String coverUrl;
   final String href;
+  final String comicId;
   final String subtitle;
   final String secondaryText;
   final String updatedAt;
+  final String lastChapterId;
+  final String lastBrowseChapterId;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'title': title,
       'coverUrl': coverUrl,
       'href': href,
+      'comicId': comicId,
       'subtitle': subtitle,
       'secondaryText': secondaryText,
       'updatedAt': updatedAt,
+      'lastChapterId': lastChapterId,
+      'lastBrowseChapterId': lastBrowseChapterId,
     };
   }
 }

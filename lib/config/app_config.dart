@@ -11,6 +11,7 @@ class AppConfig {
 
   static const String appName = 'EasyCopy';
   static const String profilePath = '/person/home';
+  static const int defaultPrimaryTabIndex = 2;
   static const ProfileCollectionSort defaultProfileCollectionSort =
       ProfileCollectionSort.latestUpdate;
 

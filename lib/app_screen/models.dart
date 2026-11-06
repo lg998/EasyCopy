@@ -33,11 +33,13 @@ class CachedChapterNavigationContext {
     this.prevHref = '',
     this.nextHref = '',
     this.catalogHref = '',
+    this.isResolved = false,
   });
 
   final String prevHref;
   final String nextHref;
   final String catalogHref;
+  final bool isResolved;
 
   bool get hasAnyValue =>
       prevHref.trim().isNotEmpty ||
@@ -47,6 +49,8 @@ class CachedChapterNavigationContext {
   CachedChapterNavigationContext mergeMissing(
     CachedChapterNavigationContext fallback,
   ) {
+    if (isResolved) return this;
+    if (fallback.isResolved) return fallback;
     return CachedChapterNavigationContext(
       prevHref: prevHref.trim().isNotEmpty ? prevHref : fallback.prevHref,
       nextHref: nextHref.trim().isNotEmpty ? nextHref : fallback.nextHref,

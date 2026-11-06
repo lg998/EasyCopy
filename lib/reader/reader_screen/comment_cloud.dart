@@ -9,9 +9,12 @@ extension _ReaderCommentCloud on ReaderScreenState {
     final SiteSession session = _controller.session;
     final bool isAuthenticated =
         session.isAuthenticated && (session.token ?? '').isNotEmpty;
+    final bool isSubmitting = _controller.isCommentSubmittingFor(page);
+    final TextEditingController textController = _controller
+        .commentControllerFor(page);
     final Widget actionButton = isAuthenticated
         ? FilledButton(
-            onPressed: _controller.isCommentSubmitting
+            onPressed: isSubmitting
                 ? null
                 : () => unawaited(_controller.submitComment(page)),
             style: FilledButton.styleFrom(
@@ -19,7 +22,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(_controller.isCommentSubmitting ? '发送中' : '发送'),
+            child: Text(isSubmitting ? '发送中' : '发送'),
           )
         : TextButton(
             onPressed: () => unawaited(widget.onRequestAuth()),
@@ -34,8 +37,8 @@ extension _ReaderCommentCloud on ReaderScreenState {
       alignment: Alignment.bottomRight,
       children: <Widget>[
         TextField(
-          controller: _controller.commentController,
-          enabled: !_controller.isCommentSubmitting,
+          controller: textController,
+          enabled: !isSubmitting,
           readOnly: !isAuthenticated,
           onTap: !isAuthenticated
               ? () => unawaited(widget.onRequestAuth())
@@ -70,34 +73,38 @@ extension _ReaderCommentCloud on ReaderScreenState {
     );
   }
 
-  void _handleCommentDragUpdate(DragUpdateDetails details) {
+  void _handleCommentDragUpdate(
+    ReaderPageData page,
+    DragUpdateDetails details,
+  ) {
     final double? primaryDelta = details.primaryDelta;
-    if (primaryDelta == null ||
-        !_controller.commentScrollController.hasClients) {
+    final ScrollController scrollController = _controller
+        .commentScrollControllerFor(page);
+    if (primaryDelta == null || !scrollController.hasClients) {
       return;
     }
-    final ScrollPosition position =
-        _controller.commentScrollController.position;
+    final ScrollPosition position = scrollController.position;
     final double nextOffset = (position.pixels - primaryDelta)
         .clamp(0.0, position.maxScrollExtent)
         .toDouble();
     if ((nextOffset - position.pixels).abs() < 0.5) return;
-    _controller.commentScrollController.jumpTo(nextOffset);
+    scrollController.jumpTo(nextOffset);
   }
 
-  void _handleCommentDragEnd(DragEndDetails details) {
-    if (!_controller.commentScrollController.hasClients) return;
+  void _handleCommentDragEnd(ReaderPageData page, DragEndDetails details) {
+    final ScrollController scrollController = _controller
+        .commentScrollControllerFor(page);
+    if (!scrollController.hasClients) return;
     final double velocity = -(details.primaryVelocity ?? 0);
     if (velocity.abs() < 90) return;
-    final ScrollPosition position =
-        _controller.commentScrollController.position;
+    final ScrollPosition position = scrollController.position;
     if (position.maxScrollExtent <= 0) return;
     final double targetOffset = (position.pixels + (velocity * 0.18))
         .clamp(0.0, position.maxScrollExtent)
         .toDouble();
     if ((targetOffset - position.pixels).abs() < 1) return;
     unawaited(
-      _controller.commentScrollController.animateTo(
+      scrollController.animateTo(
         targetOffset,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
@@ -105,7 +112,10 @@ extension _ReaderCommentCloud on ReaderScreenState {
     );
   }
 
-  Widget _buildReaderCommentScrollStrip({required bool enabled}) {
+  Widget _buildReaderCommentScrollStrip(
+    ReaderPageData page, {
+    required bool enabled,
+  }) {
     if (!enabled) return const SizedBox.shrink();
     return Align(
       alignment: Alignment.center,
@@ -114,8 +124,10 @@ extension _ReaderCommentCloud on ReaderScreenState {
         heightFactor: 1,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onVerticalDragUpdate: _handleCommentDragUpdate,
-          onVerticalDragEnd: _handleCommentDragEnd,
+          onVerticalDragUpdate: (DragUpdateDetails details) =>
+              _handleCommentDragUpdate(page, details),
+          onVerticalDragEnd: (DragEndDetails details) =>
+              _handleCommentDragEnd(page, details),
           child: const SizedBox.expand(),
         ),
       ),
@@ -128,16 +140,17 @@ extension _ReaderCommentCloud on ReaderScreenState {
     required List<ChapterComment> comments,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    if (_controller.isCommentsLoading) {
+    if (_controller.isCommentsLoadingFor(page)) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_controller.commentsError.isNotEmpty) {
+    final String commentsError = _controller.commentsErrorFor(page);
+    if (commentsError.isNotEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text(
-              _controller.commentsError,
+              commentsError,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: colorScheme.onSurface.withValues(alpha: 0.78),
@@ -211,12 +224,12 @@ extension _ReaderCommentCloud on ReaderScreenState {
                 IgnorePointer(
                   ignoring: true,
                   child: SingleChildScrollView(
-                    controller: _controller.commentScrollController,
+                    controller: _controller.commentScrollControllerFor(page),
                     physics: const NeverScrollableScrollPhysics(),
                     child: cloud,
                   ),
                 ),
-                _buildReaderCommentScrollStrip(enabled: canScroll),
+                _buildReaderCommentScrollStrip(page, enabled: canScroll),
               ],
             ),
           ),
@@ -319,7 +332,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
     final double avatarWidth = _readerCommentAvatarStackWidth(cluster.count);
     final TextScaler textScaler = MediaQuery.textScalerOf(context);
     final InlineSpan textSpan = TextSpan(
-      style: const TextStyle(
+      style: DefaultTextStyle.of(context).style.copyWith(
         fontSize: 12,
         fontWeight: FontWeight.w700,
         height: 1.25,
@@ -371,7 +384,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
         ThemeData.estimateBrightnessForColor(backgroundColor) == Brightness.dark
         ? Colors.white
         : colorScheme.onSurface;
-    final TextStyle messageStyle = TextStyle(
+    final TextStyle messageStyle = DefaultTextStyle.of(context).style.copyWith(
       color: foregroundColor,
       fontSize: 12,
       fontWeight: FontWeight.w700,

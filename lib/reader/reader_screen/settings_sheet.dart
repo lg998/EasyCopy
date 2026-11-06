@@ -260,8 +260,25 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                 const SizedBox(height: 24),
                                 SettingsSection(
                                   children: <Widget>[
+                                    if (!preferences.isPaged)
+                                      SettingsSwitchRow(
+                                        label: '连续阅读下一章',
+                                        value: preferences.continuousChapters,
+                                        onChanged: (bool value) {
+                                          unawaited(
+                                            preferencesController
+                                                .updateReaderPreferences(
+                                                  (ReaderPreferences current) =>
+                                                      current.copyWith(
+                                                        continuousChapters:
+                                                            value,
+                                                      ),
+                                                ),
+                                          );
+                                        },
+                                      ),
                                     SettingsSwitchRow(
-                                      label: '显示评论页',
+                                      label: '显示章节评论',
                                       value: preferences.showChapterComments,
                                       onChanged: (bool value) {
                                         unawaited(
@@ -276,24 +293,25 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                         );
                                       },
                                     ),
-                                    SettingsSwitchRow(
-                                      label: '关闭翻页动画',
-                                      value: preferences
-                                          .disablePageTransitionAnimation,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (
-                                                  ReaderPreferences current,
-                                                ) => current.copyWith(
-                                                  disablePageTransitionAnimation:
-                                                      value,
+                                    if (preferences.isPaged)
+                                      SettingsSwitchRow(
+                                        label: '关闭翻页动画',
+                                        value: preferences
+                                            .disablePageTransitionAnimation,
+                                        onChanged: (bool value) {
+                                          unawaited(
+                                            preferencesController
+                                                .updateReaderPreferences(
+                                                  (
+                                                    ReaderPreferences current,
+                                                  ) => current.copyWith(
+                                                    disablePageTransitionAnimation:
+                                                        value,
+                                                  ),
                                                 ),
-                                              ),
-                                        );
-                                      },
-                                    ),
+                                          );
+                                        },
+                                      ),
                                     SettingsSwitchRow(
                                       label: '点击换页',
                                       value: preferences.tapToTurnPage,

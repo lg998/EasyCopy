@@ -73,7 +73,7 @@ int _primaryTabIndex(Object? rawValue) {
   final int? parsed = rawValue is num
       ? rawValue.round()
       : int.tryParse((rawValue as String?)?.trim() ?? '');
-  return (parsed ?? 0).clamp(0, 3).toInt();
+  return (parsed ?? AppConfig.defaultPrimaryTabIndex).clamp(0, 3).toInt();
 }
 
 double _clampUnit(Object? rawValue, double fallback) {
@@ -342,6 +342,7 @@ class ReaderPreferences {
     this.disablePageTransitionAnimation = false,
     this.tapToTurnPage = false,
     this.bookMode = false,
+    this.continuousChapters = true,
   });
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -382,6 +383,7 @@ class ReaderPreferences {
           (json['disablePageTransitionAnimation'] as bool?) ?? false,
       tapToTurnPage: (json['tapToTurnPage'] as bool?) ?? false,
       bookMode: (json['bookMode'] as bool?) ?? false,
+      continuousChapters: (json['continuousChapters'] as bool?) ?? true,
     );
   }
 
@@ -401,6 +403,9 @@ class ReaderPreferences {
   final bool disablePageTransitionAnimation;
   final bool tapToTurnPage;
   final bool bookMode;
+
+  /// 从上到下阅读时，下一章直接接在本章后面连续滚动，章节之间用分割线区分。
+  final bool continuousChapters;
 
   bool get isPaged =>
       readingDirection == ReaderReadingDirection.leftToRight ||
@@ -423,6 +428,7 @@ class ReaderPreferences {
     bool? disablePageTransitionAnimation,
     bool? tapToTurnPage,
     bool? bookMode,
+    bool? continuousChapters,
   }) {
     return ReaderPreferences(
       screenOrientation: screenOrientation ?? this.screenOrientation,
@@ -443,6 +449,7 @@ class ReaderPreferences {
           disablePageTransitionAnimation ?? this.disablePageTransitionAnimation,
       tapToTurnPage: tapToTurnPage ?? this.tapToTurnPage,
       bookMode: bookMode ?? this.bookMode,
+      continuousChapters: continuousChapters ?? this.continuousChapters,
     );
   }
 
@@ -464,6 +471,7 @@ class ReaderPreferences {
       'disablePageTransitionAnimation': disablePageTransitionAnimation,
       'tapToTurnPage': tapToTurnPage,
       'bookMode': bookMode,
+      'continuousChapters': continuousChapters,
     };
   }
 }
@@ -477,7 +485,7 @@ class AppPreferences {
     this.wallpaperPreferences = const WallpaperPreferences(),
     this.shortcutPreferences = const ShortcutPreferences(),
     this.profileCollectionSort = AppConfig.defaultProfileCollectionSort,
-    this.lastPrimaryTabIndex = 0,
+    this.lastPrimaryTabIndex = AppConfig.defaultPrimaryTabIndex,
     this.chineseConversionMode = ChineseConversionMode.disabled,
   });
 

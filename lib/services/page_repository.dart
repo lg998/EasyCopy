@@ -342,6 +342,10 @@ class PageRepository {
   }
 
   bool _isSupportedCache(CachedPageEnvelope envelope) {
+    if (envelope.pageType == SitePageType.rank) {
+      final Object? items = envelope.payload['items'];
+      return items is List && items.length > 50;
+    }
     return envelope.pageType != SitePageType.reader ||
         envelope.readerCacheVersion == PageCacheStore.readerCacheVersion;
   }

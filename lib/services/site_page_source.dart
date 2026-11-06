@@ -33,6 +33,7 @@ abstract interface class SitePageSource {
 enum SitePageRoute {
   profile,
   search,
+  rank,
   reader,
   html,
   standard;
@@ -45,6 +46,9 @@ enum SitePageRoute {
       return search;
     }
     final String path = uri.path.toLowerCase();
+    if (path.startsWith('/rank')) {
+      return rank;
+    }
     if (path.contains('/chapter/')) {
       return reader;
     }
@@ -54,7 +58,6 @@ enum SitePageRoute {
         path.startsWith('/recommend') ||
         path.startsWith('/newest') ||
         path.startsWith('/author') ||
-        path.startsWith('/rank') ||
         path.startsWith('/comic/')) {
       return html;
     }
@@ -123,6 +126,20 @@ class RoutedSitePageSource implements SitePageSource {
           page: int.tryParse(targetUri.queryParameters['page'] ?? '') ?? 1,
           qType: targetUri.queryParameters['q_type'] ?? '',
         );
+      case SitePageRoute.rank:
+        try {
+          return await _apiClient.loadRankPage(uri: targetUri);
+        } catch (error) {
+          debugPrint(
+            'Rank API loader failed for ${targetUri.path}; '
+            'falling back to HTML loader. $error',
+          );
+          return _htmlSource.load(
+            targetUri,
+            authScope: authScope,
+            requestContext: requestContext,
+          );
+        }
       case SitePageRoute.reader:
         try {
           DebugTrace.log('reader.html_loader_start', <String, Object?>{

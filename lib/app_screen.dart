@@ -32,6 +32,7 @@ import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/app_update_checker.dart';
 import 'package:reader/services/blocked_content_filter.dart';
+import 'package:reader/services/chapter_navigation.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
@@ -203,7 +204,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       isMounted: () => mounted,
       selectedIndex: () => _nav.selectedIndex,
       currentEntry: () => _currentEntry,
-      page: () => _page,
+      page: () => _currentEntry.page,
       isReaderMode: () => _isReaderMode,
     );
     _detailChapters = DetailChapterController(
@@ -544,6 +545,14 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                                 _logout(showFeedback: false),
                             onResolveHistoryCover:
                                 _resolveHistoryCoverForCatalog,
+                            onLoadContinuousChapter:
+                                _loadContinuousReaderChapter,
+                            onContinuousChapterChanged:
+                                _commitContinuousReaderChapter,
+                            onExitReader: _handleBackNavigation,
+                            onExitToHome: _handleReaderExitToHome,
+                            onReloadChapter: _reloadReaderChapter,
+                            onLoadCatalog: _loadReaderCatalogDetail,
                           ),
                         ),
                       )

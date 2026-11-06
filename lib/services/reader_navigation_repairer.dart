@@ -1,6 +1,6 @@
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
-import 'package:reader/services/uri_keys.dart';
+import 'package:reader/services/chapter_navigation.dart';
 
 typedef ReaderNavigationPageLoader =
     Future<ReaderPageData?> Function(Uri uri, {required String authScope});
@@ -17,60 +17,46 @@ class ReaderNavigationRepairer {
     required ReaderNavigationDetailLoader loadDetailPage,
     String preferredCatalogHref = '',
   }) async {
-    if (!page.hasMissingChapterNavigation) {
-      return page;
+    // A blank link can be an intentional group boundary. Resolve the catalog
+    // before filling blanks, and replace stale links that cross groups.
+    final Uri? detailUri = _detailUriForPage(
+      page,
+      preferredCatalogHref: preferredCatalogHref,
+    );
+    if (detailUri != null) {
+      try {
+        final DetailPageData? detail = await loadDetailPage(
+          detailUri,
+          authScope: authScope,
+        );
+        if (detail != null) {
+          final ReaderPageData constrained = ChapterNavigation.constrain(
+            page,
+            detail,
+          );
+          if (!identical(constrained, page)) return constrained;
+        }
+      } catch (_) {
+        // Catalog unavailable: retain readable content and try reader metadata.
+      }
     }
-
-    ReaderPageData repairedPage = page;
-
+    if (!page.hasMissingChapterNavigation) return page;
     try {
-      final ReaderPageData? freshReaderPage = await loadReaderPage(
+      final ReaderPageData? fresh = await loadReaderPage(
         Uri.parse(page.uri),
         authScope: authScope,
       );
-      if (freshReaderPage != null) {
-        repairedPage = repairedPage.mergeMissingNavigation(
-          prevHref: freshReaderPage.prevHref,
-          nextHref: freshReaderPage.nextHref,
-          catalogHref: freshReaderPage.catalogHref,
+      if (fresh != null) {
+        return page.mergeMissingNavigation(
+          prevHref: fresh.prevHref,
+          nextHref: fresh.nextHref,
+          catalogHref: fresh.catalogHref,
         );
       }
     } catch (_) {
-      // 修复失败保留原页面。
+      // Repair failure must not prevent reading cached chapters.
     }
-
-    if (!repairedPage.hasMissingChapterNavigation) {
-      return repairedPage;
-    }
-
-    final Uri? detailUri = _detailUriForPage(
-      repairedPage,
-      preferredCatalogHref: preferredCatalogHref,
-    );
-    if (detailUri == null) {
-      return repairedPage;
-    }
-
-    try {
-      final DetailPageData? detailPage = await loadDetailPage(
-        detailUri,
-        authScope: authScope,
-      );
-      if (detailPage == null) {
-        return repairedPage;
-      }
-      final _AdjacentChapterLinks links = _adjacentChapterLinks(
-        detailPage,
-        repairedPage.uri,
-      );
-      return repairedPage.mergeMissingNavigation(
-        prevHref: links.prevHref,
-        nextHref: links.nextHref,
-        catalogHref: detailPage.uri,
-      );
-    } catch (_) {
-      return repairedPage;
-    }
+    return page;
   }
 
   static Uri? _detailUriForPage(
@@ -111,35 +97,4 @@ class ReaderNavigationRepairer {
     final String path = uri.path.toLowerCase();
     return path.startsWith('/comic/') && !path.contains('/chapter/');
   }
-
-  static _AdjacentChapterLinks _adjacentChapterLinks(
-    DetailPageData page,
-    String currentChapterHref,
-  ) {
-    final List<ChapterData> chapters = page.chapters.isNotEmpty
-        ? page.chapters
-        : page.chapterGroups
-              .expand((ChapterGroupData group) => group.chapters)
-              .toList(growable: false);
-    final String currentKey = _chapterPathKey(currentChapterHref);
-    final int index = chapters.indexWhere(
-      (ChapterData chapter) => _chapterPathKey(chapter.href) == currentKey,
-    );
-    if (index == -1) {
-      return const _AdjacentChapterLinks();
-    }
-    return _AdjacentChapterLinks(
-      prevHref: index > 0 ? chapters[index - 1].href : '',
-      nextHref: index + 1 < chapters.length ? chapters[index + 1].href : '',
-    );
-  }
-
-  static String _chapterPathKey(String href) => UriKeys.pathKey(href);
-}
-
-class _AdjacentChapterLinks {
-  const _AdjacentChapterLinks({this.prevHref = '', this.nextHref = ''});
-
-  final String prevHref;
-  final String nextHref;
 }

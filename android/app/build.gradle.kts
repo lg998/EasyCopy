@@ -130,7 +130,22 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Install side by side with the release build from GitHub.
+            applicationIdSuffix = ".debug"
+        }
+        named("profile") {
+            applicationIdSuffix = ".debug"
+        }
         release {
+            val useDebugAppId = (
+                (findProperty("useDebugAppId") as String?)
+                    ?: System.getenv("EASY_COPY_USE_DEBUG_APP_ID")
+                    ?: "false"
+            ).toBoolean()
+            if (useDebugAppId) {
+                applicationIdSuffix = ".debug"
+            }
             signingConfig = if (hasReleaseSigningInputs) {
                 signingConfigs.getByName("release")
             } else {

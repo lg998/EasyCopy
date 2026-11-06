@@ -50,6 +50,10 @@ extension _SiteApiParsing on SiteApiClient {
             'cartoon',
             'results',
           ]);
+          final Map<String, Object?> browse = _firstNonEmptyMap(item, <String>[
+            'last_browse',
+            'browse',
+          ]);
           final Map<String, Object?> source = comic.isEmpty ? item : comic;
           final String pathWord = pickString(source, <String>[
             'path_word',
@@ -67,6 +71,24 @@ extension _SiteApiParsing on SiteApiClient {
               'update_time',
             ],
           );
+          final String comicId = pickString(source, const <String>[
+            'uuid',
+            'comic_id',
+            'comicId',
+          ]);
+          final String lastChapterId = pickFirstString(
+            <Map<String, Object?>>[source, item],
+            const <String>['last_chapter_id', 'lastChapterId'],
+          );
+          final String lastBrowseChapterId = pickFirstString(
+            <Map<String, Object?>>[browse, item],
+            const <String>[
+              'last_browse_id',
+              'lastBrowseId',
+              'chapter_uuid',
+              'chapter_id',
+            ],
+          );
           return ProfileLibraryItem(
             title: pickString(source, <String>['name', 'title']),
             coverUrl: pickString(source, <String>[
@@ -75,17 +97,23 @@ extension _SiteApiParsing on SiteApiClient {
               'image',
             ]),
             href: _buildComicHref(pathWord, source, item),
+            comicId: comicId,
             subtitle: pickString(source, <String>[
               'author_name',
               'author',
               'subtitle',
             ]),
-            secondaryText: pickString(source, <String>[
-              'last_chapter_name',
-              'datetime_updated',
-              'status',
-            ]),
+            secondaryText: pickFirstString(
+              <Map<String, Object?>>[source, item],
+              const <String>[
+                'last_chapter_name',
+                'lastChapterName',
+                'status',
+              ],
+            ),
             updatedAt: updatedAt,
+            lastChapterId: lastChapterId,
+            lastBrowseChapterId: lastBrowseChapterId,
           );
         })
         .where((ProfileLibraryItem item) => item.title.isNotEmpty)
@@ -193,6 +221,139 @@ extension _SiteApiParsing on SiteApiClient {
       href: _buildComicHref(pathWord, source, item),
       authorLinks: _searchAuthorLinks(source),
     );
+  }
+
+  RankEntryData _parseRankEntry(
+    Map<String, Object?> item, {
+    required int fallbackRank,
+  }) {
+    final Map<String, Object?> comic = _firstNonEmptyMap(item, const <String>[
+      'comic',
+      'comic_info',
+      'cartoon',
+      'results',
+    ]);
+    final Map<String, Object?> source = comic.isEmpty ? item : comic;
+    final String pathWord = pickString(source, const <String>[
+      'path_word',
+      'pathWord',
+      'slug',
+    ]);
+    final int sort = pickInt(
+      item,
+      const <String>['sort', 'rank'],
+      fallback: fallbackRank,
+    );
+    final String authorText = _searchAuthorLabel(source);
+    final int popular = pickInt(
+      item,
+      const <String>['popular'],
+      fallback: pickInt(source, const <String>['popular'], fallback: 0),
+    );
+    final int riseSort = pickInt(
+      item,
+      const <String>['rise_sort', 'riseSort'],
+      fallback: 0,
+    );
+    final int sortLast = pickInt(
+      item,
+      const <String>['sort_last', 'sortLast'],
+      fallback: 0,
+    );
+    final String trend = riseSort < 0
+        ? 'down'
+        : (sortLast > 0 && riseSort > 0 ? 'up' : 'stable');
+
+    return RankEntryData(
+      rankLabel: '${sort > 0 ? sort : fallbackRank}',
+      title: pickString(source, const <String>['name', 'title']),
+      authors: authorText.isEmpty ? '' : '作者：$authorText',
+      heat: _formatRankPopular(popular),
+      trend: trend,
+      coverUrl: pickString(source, const <String>[
+        'cover',
+        'cover_url',
+        'image',
+      ]),
+      href: _buildComicHref(pathWord, source, item),
+    );
+  }
+
+  String _formatRankPopular(int popular) {
+    if (popular <= 0) {
+      return '';
+    }
+    if (popular >= 10000) {
+      return '${(popular / 10000).toStringAsFixed(1)}W';
+    }
+    return '$popular';
+  }
+
+  String _rankPageTitle(String dateType) {
+    return switch (dateType) {
+      'week' => '漫畫排行周榜',
+      'month' => '漫畫排行月榜',
+      'total' => '漫畫排行總榜',
+      _ => '漫畫排行日榜',
+    };
+  }
+
+  List<LinkAction> _buildRankCategories({
+    required String audienceType,
+    required String dateType,
+  }) {
+    return <LinkAction>[
+      LinkAction(
+        label: '漫畫排行榜(男頻)',
+        href: AppConfig.resolvePath(
+          '/rank?type=male&table=$dateType',
+        ).toString(),
+        active: audienceType == 'male',
+      ),
+      LinkAction(
+        label: '漫畫排行榜(女頻)',
+        href: AppConfig.resolvePath(
+          '/rank?type=female&table=$dateType',
+        ).toString(),
+        active: audienceType == 'female',
+      ),
+    ];
+  }
+
+  List<LinkAction> _buildRankPeriods({
+    required String audienceType,
+    required String dateType,
+  }) {
+    return <LinkAction>[
+      LinkAction(
+        label: '日榜(上升最快)',
+        href: AppConfig.resolvePath(
+          '/rank?type=$audienceType&table=day',
+        ).toString(),
+        active: dateType == 'day',
+      ),
+      LinkAction(
+        label: '周榜(最近7天)',
+        href: AppConfig.resolvePath(
+          '/rank?type=$audienceType&table=week',
+        ).toString(),
+        active: dateType == 'week',
+      ),
+      LinkAction(
+        label: '月榜(最近30天)',
+        href: AppConfig.resolvePath(
+          '/rank?type=$audienceType&table=month',
+        ).toString(),
+        active: dateType == 'month',
+      ),
+      LinkAction(
+        label: '總榜單',
+        href: AppConfig.resolvePath(
+          '/rank?type=$audienceType&table=total',
+        ).toString(),
+        active: dateType == 'total',
+      ),
+    ];
   }
 
   ChapterComment _parseChapterComment(Map<String, Object?> item) {
@@ -319,7 +480,11 @@ extension _SiteApiParsing on SiteApiClient {
         return labels.join(' / ');
       }
     }
-    return pickString(source, const <String>['author_name', 'author']);
+    return pickString(source, const <String>[
+      'author_name',
+      'author_alias',
+      'author',
+    ]);
   }
 
   List<LinkAction> _searchAuthorLinks(Map<String, Object?> source) {

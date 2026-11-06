@@ -108,13 +108,14 @@ class LocalProfilePageLoader {
 
     final String localScope = isLoggedIn ? authScope : guestScope;
 
+    const int collectionsPageSize = 21;
     final (
       List<ProfileLibraryItem> collectionsPreview,
       int collectionsTotal,
     ) = await _libraryStore.readCollectionsPage(
       localScope,
       page: view == ProfileSubview.collections ? activePage : 1,
-      pageSize: 20,
+      pageSize: collectionsPageSize,
       sort: collectionSort,
     );
     final (
@@ -138,7 +139,7 @@ class LocalProfilePageLoader {
             view: ProfileSubview.collections,
             currentPage: activePage,
             totalItems: collectionsTotal,
-            pageSize: 20,
+            pageSize: collectionsPageSize,
             collectionSort: collectionSort,
           ),
           collectionsTotal: collectionsTotal,

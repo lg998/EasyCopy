@@ -129,7 +129,7 @@ class DetailChapterController {
     if (active == null || active.chapters.isEmpty) {
       return const <ChapterData>[];
     }
-    if (!_sortAscending) {
+    if (_sortAscending) {
       return active.chapters;
     }
     return active.chapters.reversed.toList(growable: false);

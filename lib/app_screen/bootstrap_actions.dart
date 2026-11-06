@@ -118,17 +118,20 @@ extension _AppScreenBootstrapActions on _AppScreenState {
         });
       }
     }
-    final int initialTabIndex = _preferencesController.lastPrimaryTabIndex
+    final int defaultTabIndex = AppConfig.defaultPrimaryTabIndex
         .clamp(0, appDestinations.length - 1)
         .toInt();
     final Uri homeUri =
-        targetUri ?? debugUri ?? appDestinations[initialTabIndex].uri;
+        targetUri ?? debugUri ?? appDestinations[defaultTabIndex].uri;
     if (!mounted) {
       return;
     }
-    _setStateIfMounted(() {
-      _setSelectedPrimaryTabIndex(tabIndexForUri(homeUri), persist: false);
-    });
+    final int resolvedTabIndex = tabIndexForUri(homeUri);
+    if (_nav.selectedIndex != resolvedTabIndex) {
+      _setStateIfMounted(() {
+        _setSelectedPrimaryTabIndex(resolvedTabIndex, persist: false);
+      });
+    }
     _searchActions.syncFromCurrentUri();
     await _loadUri(homeUri, historyMode: NavigationIntent.resetToRoot);
     DebugTrace.log('bootstrap.home_ready', <String, Object?>{
@@ -168,10 +171,10 @@ extension _AppScreenBootstrapActions on _AppScreenState {
     unawaited(_prefetchPrimaryTabRoots());
   }
 
-  /// 后台预热「发现 / 排行」根页。
+  /// 后台预热「首页 / 发现」根页。
   Future<void> _prefetchPrimaryTabRoots() async {
     await Future<void>.delayed(const Duration(seconds: 4));
-    for (final int tabIndex in <int>[1, 2]) {
+    for (final int tabIndex in <int>[0, 1]) {
       if (!mounted || _isReaderMode) {
         return;
       }

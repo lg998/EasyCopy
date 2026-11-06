@@ -1,6 +1,85 @@
 part of '../reader_screen.dart';
 
 extension _ReaderChapterBoundary on ReaderScreenState {
+  /// 连续阅读：上一章与 [next] 之间的分割线。
+  Widget _buildContinuousChapterDivider(
+    BuildContext context,
+    ReaderPageData next,
+  ) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final String rawTitle = next.chapterTitle.trim().isNotEmpty
+        ? next.chapterTitle
+        : next.title;
+    final String title = ChineseConverter.instance.convert(rawTitle).trim();
+    final Color lineColor = colorScheme.onSurface.withValues(alpha: 0.16);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Container(height: 1, color: lineColor)),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 240),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                title.isEmpty ? '下一章' : title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colorScheme.onSurface.withValues(alpha: 0.55),
+                  fontSize: 12.5,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          Expanded(child: Container(height: 1, color: lineColor)),
+        ],
+      ),
+    );
+  }
+
+  /// 连续阅读：列表最底部的状态（加载下一章 / 加载失败 / 已是最后一话）。
+  Widget _buildContinuousChapterTail(
+    BuildContext context,
+    ReaderPageData last,
+  ) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final TextStyle hintStyle = TextStyle(
+      color: colorScheme.onSurface.withValues(alpha: 0.5),
+      fontSize: 12.5,
+      fontWeight: FontWeight.w600,
+    );
+    final Widget child;
+    if (last.nextHref.trim().isEmpty) {
+      child = Text('已经是最后一话', style: hintStyle);
+    } else if (_controller.appendError.isNotEmpty &&
+        !_controller.isAppendingSegment) {
+      child = TextButton.icon(
+        onPressed: () => unawaited(_controller.retryAppendNextSegment()),
+        icon: const Icon(Icons.refresh_rounded, size: 18),
+        label: Text('${_controller.appendError}，点击重试'),
+      );
+    } else {
+      child = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colorScheme.onSurface.withValues(alpha: 0.45),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text('正在加载下一章…', style: hintStyle),
+        ],
+      );
+    }
+    return SizedBox(height: 96, child: Center(child: child));
+  }
   Widget _buildReaderNextChapterFooter(
     BuildContext context,
     ReaderPageData page,
@@ -8,11 +87,24 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     return SizedBox(
       height: _controller.isPaged ? 72 : 80,
       child: Center(
-        child: _buildReaderChapterBoundaryCue(
-          context,
-          isPrevious: false,
-          compact: false,
-          forceVisible: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _controller.isNextChapterLoading
+              ? null
+              : () {
+                  _controller.noteUserInteraction();
+                  unawaited(_controller.triggerNextChapter(page));
+                },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            child: _buildReaderChapterBoundaryCue(
+              context,
+              isPrevious: false,
+              compact: false,
+              forceVisible: true,
+              tappable: true,
+            ),
+          ),
         ),
       ),
     );
@@ -96,6 +188,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     required bool isPrevious,
     required bool compact,
     required bool forceVisible,
+    bool tappable = false,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final ReaderPreferences preferences = _controller.preferences;
@@ -108,7 +201,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
             ? _controller.previousChapterPullReady
             : _controller.nextChapterPullReady) &&
         !isLoading;
-    final double triggerDistance = _controller.isPaged ? 152 : 266;
+    final double triggerDistance = _controller.chapterPullTriggerDistance;
     final double progress = (pullDistance / triggerDistance)
         .clamp(0, 1)
         .toDouble();
@@ -131,23 +224,27 @@ extension _ReaderChapterBoundary on ReaderScreenState {
       (true, false, _) => Icons.expand_more_rounded,
       (true, true, _) => Icons.chevron_right_rounded,
     };
-    final String label = isPrevious ? '上一章' : '下一章';
+    final String label = isPrevious
+        ? '上一章'
+        : (tappable ? '点击进入下一章' : '下一章');
     final Color accentColor = colorScheme.primary;
     final double bgAlpha = compact ? 0.82 : 0.92;
     final double height = compact ? 36.0 : 44.0;
     final double iconSize = compact ? 18.0 : 20.0;
     final double fontSize = compact ? 12.0 : 13.0;
+    // A tappable footer should look like a button even before any pull.
+    final double emphasis = tappable ? math.max(progress, 0.6) : progress;
 
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutQuart,
       opacity: !isVisible
           ? 0
-          : (isLoading || isReady ? 1 : (0.5 + progress * 0.5).clamp(0, 1)),
+          : (isLoading || isReady ? 1 : (0.5 + emphasis * 0.5).clamp(0, 1)),
       child: AnimatedScale(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOutQuart,
-        scale: isReady ? 1.0 : 0.88 + (progress * 0.12),
+        scale: isReady || tappable ? 1.0 : 0.88 + (progress * 0.12),
         child: Container(
           height: height,
           padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 18),
@@ -156,7 +253,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
             borderRadius: BorderRadius.circular(height / 2),
             border: Border.all(
               color: accentColor.withValues(
-                alpha: isReady ? 0.5 : 0.15 + (progress * 0.2),
+                alpha: isReady ? 0.5 : 0.15 + (emphasis * 0.2),
               ),
               width: isReady ? 1.5 : 1.0,
             ),
@@ -179,7 +276,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
                   directionIcon,
                   size: iconSize,
                   color: accentColor.withValues(
-                    alpha: isReady ? 1 : 0.5 + (progress * 0.5),
+                    alpha: isReady ? 1 : 0.5 + (emphasis * 0.5),
                   ),
                 ),
               SizedBox(width: compact ? 4 : 6),
@@ -189,7 +286,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
                   color: isReady
                       ? accentColor
                       : colorScheme.onSurface.withValues(
-                          alpha: 0.6 + (progress * 0.4),
+                          alpha: 0.6 + (emphasis * 0.4),
                         ),
                   fontSize: fontSize,
                   fontWeight: isReady ? FontWeight.w700 : FontWeight.w600,

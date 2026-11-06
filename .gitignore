@@ -64,3 +64,12 @@ release/
 /android/app/profile
 /android/app/release
 logs_anr_*/
+
+# Local release builds and signing material
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+*.pfx
+/android/key.properties

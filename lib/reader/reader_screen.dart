@@ -35,10 +35,10 @@ import 'package:reader/widgets/top_notice.dart';
 
 part 'reader_screen/chapter_boundary.dart';
 part 'reader_screen/comment_cloud.dart';
+part 'reader_screen/hud_overlay.dart';
 part 'reader_screen/settings_sheet.dart';
 
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
-const double _uiToggleInsetRatio = 0.075;
 const double _tapTurnSideZoneRatio = 0.33;
 const double _settingsDismissDistance = 72;
 const double _instantPageSwipeDistance = 72;
@@ -70,6 +70,12 @@ class ReaderScreen extends StatefulWidget {
     required this.onResolveHistoryCover,
     this.openAtEnd = false,
     this.onOpenAtEndConsumed,
+    this.onLoadContinuousChapter,
+    this.onContinuousChapterChanged,
+    this.onExitReader,
+    this.onExitToHome,
+    this.onReloadChapter,
+    this.onLoadCatalog,
     super.key,
   });
 
@@ -86,6 +92,24 @@ class ReaderScreen extends StatefulWidget {
 
   /// 清除末页定位意图。
   final VoidCallback? onOpenAtEndConsumed;
+
+  /// 连续阅读：加载下一章数据（不切换路由）。
+  final ReaderAdjacentChapterLoader? onLoadContinuousChapter;
+
+  /// 连续阅读：滚动进入另一章后同步给上层。
+  final void Function(ReaderPageData page)? onContinuousChapterChanged;
+
+  /// 退出阅读页（返回上一页 / 漫画详情）。
+  final Future<void> Function()? onExitReader;
+
+  /// 退出阅读页并回到主标签根页。
+  final Future<void> Function()? onExitToHome;
+
+  /// 重新加载当前章节。
+  final Future<void> Function(ReaderPageData page)? onReloadChapter;
+
+  /// 加载当前漫画的目录数据供阅读器内章节选择面板使用。
+  final Future<DetailPageData?> Function(ReaderPageData page)? onLoadCatalog;
 
   @override
   State<ReaderScreen> createState() => ReaderScreenState();
@@ -117,10 +141,16 @@ class ReaderScreenState extends State<ReaderScreen> {
       onRequestAuth: widget.onRequestAuth,
       onLogoutForExpiredSession: widget.onLogoutForExpiredSession,
       onShowMessage: _showNotice,
+      loadAdjacentChapter: widget.onLoadContinuousChapter,
+      onActiveChapterChanged: widget.onContinuousChapterChanged,
     );
     _controller.attachPlatformSubscriptions();
-    _controller.imageOffset = (int index) =>
-        _estimateOffsetForImage(context, widget.page, index);
+    _controller.onSegmentsEvicted = _evictSegmentImages;
+    _controller.imageOffset = (int index) => _estimateOffsetForImage(
+      context,
+      _controller.page ?? widget.page,
+      index,
+    );
     _controller.turnBook = (int index) async {
       final int count = widget.page.imageUrls.length;
       await _bookKey.currentState?.turnTo(
@@ -184,11 +214,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     final double viewportWidth = renderBox != null && renderBox.hasSize
         ? renderBox.size.width
         : MediaQuery.sizeOf(context).width;
-    final double viewportHeight = renderBox != null && renderBox.hasSize
-        ? renderBox.size.height
-        : details.localPosition.dy * 2;
     final double dx = details.localPosition.dx;
-    final double dy = details.localPosition.dy;
     final ReaderPreferences preferences = _controller.preferences;
 
     if (preferences.tapToTurnPage) {
@@ -201,24 +227,7 @@ class ReaderScreenState extends State<ReaderScreen> {
         _handleTapPageTurn(tappedLeft: false);
         return;
       }
-      _handleReaderMenuTap(dy <= viewportHeight * 0.5);
-      return;
     }
-
-    final double uiToggleInsetWidth = viewportWidth * _uiToggleInsetRatio;
-    if (dx <= uiToggleInsetWidth || dx >= viewportWidth - uiToggleInsetWidth) {
-      return;
-    }
-    _handleReaderMenuTap(dy <= viewportHeight * 0.5);
-  }
-
-  void _handleReaderMenuTap(bool isTopHalf) {
-    if (isTopHalf) {
-      _controller.hideChapterControls();
-      unawaited(_showReaderSettingsSheet());
-      return;
-    }
-    _controller.toggleChapterControls();
   }
 
   void _handleTapPageTurn({required bool tappedLeft}) {
@@ -255,11 +264,13 @@ class ReaderScreenState extends State<ReaderScreen> {
     final ReaderPreferences preferences = _controller.preferences;
     final double topOffset = preferences.fullscreen ? 2 : viewPadding.top + 6;
     final int? batteryLevel = _controller.batteryLevel;
+    final bool hideTopStatus = _controller.isChapterControlsVisible;
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
           if (_controller.platformBridge.isAndroidSupported &&
-              preferences.showBattery)
+              preferences.showBattery &&
+              !hideTopStatus)
             Positioned(
               left: 8,
               top: topOffset,
@@ -269,13 +280,13 @@ class ReaderScreenState extends State<ReaderScreen> {
                 fontSize: 14,
               ),
             ),
-          if (preferences.showClock)
+          if (preferences.showClock && !hideTopStatus)
             Positioned(
               right: 8,
               top: topOffset,
               child: const _ReaderClockLabel(),
             ),
-          if (preferences.showProgress)
+          if (preferences.showProgress && !hideTopStatus)
             Positioned(
               left: 0,
               right: 0,
@@ -308,84 +319,6 @@ class ReaderScreenState extends State<ReaderScreen> {
       return '${first == last ? first : '$first–$last'}/${page.imageUrls.length}';
     }
     return '${visibleIndex + 1}/${page.imageUrls.length}';
-  }
-
-  Widget _buildReaderChapterControls(
-    BuildContext context,
-    ReaderPageData page,
-  ) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final int imageCount = page.imageUrls.length;
-    final bool showSeekBar = imageCount > 1;
-    final int currentImageIndex = imageCount == 0
-        ? 0
-        : (_controller.isPaged
-                  ? _controller.currentPageIndex
-                  : _controller.visibleImageIndex)
-              .clamp(0, imageCount - 1);
-    return AppSurfaceCard(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (showSeekBar) ...<Widget>[
-            ReaderProgressSeekBar(
-              currentIndex: currentImageIndex,
-              totalCount: imageCount,
-              onInteraction: () {
-                _controller.noteUserInteraction();
-                _controller.cancelAutoTurn();
-              },
-              onSeek: (int index) =>
-                  _seekReaderToImageIndex(context, page, index),
-            ),
-            const SizedBox(height: 10),
-          ],
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: FilledButton.tonal(
-                  onPressed: page.prevHref.isEmpty
-                      ? null
-                      : () => unawaited(_navigateToHref(page.prevHref, page)),
-                  child: const Text('上一话'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 88, maxWidth: 120),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (page.chapterTitle.isNotEmpty)
-                      Text(
-                        ChineseConverter.instance.convert(page.chapterTitle),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withValues(alpha: 0.66),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: page.nextHref.isEmpty
-                      ? null
-                      : () => unawaited(_navigateToHref(page.nextHref, page)),
-                  child: const Text('下一话'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _navigateToHref(String href, ReaderPageData currentPage) {
@@ -466,47 +399,6 @@ class ReaderScreenState extends State<ReaderScreen> {
     return offset;
   }
 
-  Widget _buildChapterControlsOverlay(
-    BuildContext context,
-    ReaderPageData page,
-  ) {
-    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
-    final ReaderPreferences preferences = _controller.preferences;
-    final double horizontalPadding = preferences.showPageGap ? 12 : 0;
-    final double bottomPadding =
-        (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 12;
-    return Positioned(
-      left: horizontalPadding,
-      right: horizontalPadding,
-      bottom: bottomPadding,
-      child: IgnorePointer(
-        ignoring: !_controller.isChapterControlsVisible,
-        child: AnimatedSlide(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          offset: _controller.isChapterControlsVisible
-              ? Offset.zero
-              : const Offset(0, 1.08),
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            opacity: _controller.isChapterControlsVisible ? 1 : 0,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: usesWideLayout(context)
-                      ? kWideReaderControlsMaxWidth
-                      : double.infinity,
-                ),
-                child: _buildReaderChapterControls(context, page),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildReaderScrollableContent(
     BuildContext context,
     ReaderPageData page,
@@ -514,44 +406,110 @@ class ReaderScreenState extends State<ReaderScreen> {
     final ReaderPreferences preferences = _controller.preferences;
     final bool showGap = preferences.showPageGap;
     final double topPadding = preferences.fullscreen && showGap ? 0 : 8;
+    final bool continuous = _controller.isContinuous;
+    final List<ReaderPageData> segments = _controller.segments.isEmpty
+        ? <ReaderPageData>[page]
+        : _controller.segments;
     final bool showCommentTail = _controller.shouldShowCommentTailPage(page);
+    final bool showComments = preferences.showChapterComments;
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
+    final double? viewportHeight =
+        preferences.pageFit == ReaderPageFit.fitScreen
+        ? MediaQuery.sizeOf(context).height * 0.72
+        : null;
+    _controller.segmentTopPadding = topPadding;
+    // 连续阅读时下一章自动接在后面，只保留顶部下拉回上一章。
+    final ReaderPageData pullPage = continuous
+        ? segments.first.copyWith(nextHref: '')
+        : page;
     final ScrollPhysics scrollPhysics =
         (_controller.isScaleGestureActive || _controller.zoomScale > 1.01)
         ? const NeverScrollableScrollPhysics()
         : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
+    final Widget tail = continuous
+        ? _buildContinuousChapterTail(context, segments.last)
+        : showCommentTail
+        ? _buildReaderCommentTailPage(context, page)
+        : hasNextChapter
+        ? _buildReaderNextChapterFooter(context, page)
+        : const SizedBox.shrink();
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         _handleScrollLifecycle(notification);
         if (!_controller.isZoomGestureLocked) {
           _controller.handleChapterPull(
             notification,
-            page: page,
+            page: pullPage,
             controller: _controller.scrollController,
           );
+        }
+        if (notification.depth == 0 && notification is ScrollEndNotification) {
+          _controller.handleScrollIdle();
         }
         if (_isUserDrivenScrollNotification(notification)) {
           _controller.noteUserInteraction();
         }
         return false;
       },
-      child: ListView.builder(
+      child: CustomScrollView(
         key: ValueKey<String>(
-          'reader-scroll-${page.uri}-${preferences.pageFit.name}-$showGap-$showCommentTail',
+          'reader-scroll-${_controller.scrollSession}-${preferences.pageFit.name}-$showGap-$showComments-$continuous',
         ),
         controller: _controller.scrollController,
         physics: scrollPhysics,
-        padding: EdgeInsets.only(top: topPadding, bottom: 16),
-        itemCount:
-            page.imageUrls.length + (showCommentTail || hasNextChapter ? 1 : 0),
-        itemBuilder: (BuildContext context, int index) {
-          if (index >= page.imageUrls.length) {
-            return showCommentTail
-                ? _buildReaderCommentTailPage(context, page)
-                : _buildReaderNextChapterFooter(context, page);
-          }
+        slivers: <Widget>[
+          SliverToBoxAdapter(
+            key: const ValueKey<String>('reader-top-padding'),
+            child: SizedBox(height: topPadding),
+          ),
+          for (int index = 0; index < segments.length; index += 1) ...<Widget>[
+            if (index > 0)
+              SliverToBoxAdapter(
+                key: ValueKey<String>('reader-divider-${segments[index].uri}'),
+                child: _buildContinuousChapterDivider(context, segments[index]),
+              ),
+            _buildReaderSegmentSliver(
+              context,
+              segments[index],
+              showGap: showGap,
+              viewportHeight: viewportHeight,
+            ),
+            if (continuous &&
+                _controller.shouldShowChapterComments(segments[index]))
+              SliverToBoxAdapter(
+                key: ValueKey<String>('reader-comments-${segments[index].uri}'),
+                child: _buildContinuousSegmentComments(
+                  context,
+                  segments[index],
+                ),
+              ),
+          ],
+          SliverToBoxAdapter(
+            key: const ValueKey<String>('reader-tail'),
+            child: tail,
+          ),
+          const SliverToBoxAdapter(
+            key: ValueKey<String>('reader-bottom-padding'),
+            child: SizedBox(height: 16),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReaderSegmentSliver(
+    BuildContext context,
+    ReaderPageData segment, {
+    required bool showGap,
+    required double? viewportHeight,
+  }) {
+    final ReaderPreferences preferences = _controller.preferences;
+    return SliverList(
+      key: _controller.segmentSliverKeyFor(segment.uri),
+      delegate: SliverChildBuilderDelegate(
+        (BuildContext context, int index) {
           return Padding(
-            key: _controller.imageItemKeyFor(index),
+            key: _controller.imageItemKeyForSegment(segment.uri, index),
             padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
             child: Center(
               child: ConstrainedBox(
@@ -560,19 +518,28 @@ class ReaderScreenState extends State<ReaderScreen> {
                 ),
                 child: _buildReaderImageFrame(
                   context,
-                  page: page,
+                  page: segment,
                   imageIndex: index,
-                  imageUrl: page.imageUrls[index],
-                  viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
-                      ? MediaQuery.sizeOf(context).height * 0.72
-                      : null,
+                  imageUrl: segment.imageUrls[index],
+                  viewportHeight: viewportHeight,
                 ),
               ),
             ),
           );
         },
+        childCount: segment.imageUrls.length,
+        addAutomaticKeepAlives: false,
       ),
     );
+  }
+
+  /// 连续阅读移除的章节：把它们的图片从内存缓存里清掉。
+  void _evictSegmentImages(List<ReaderPageData> evicted) {
+    for (final ReaderPageData segment in evicted) {
+      for (final String imageUrl in segment.imageUrls) {
+        unawaited(_readerImageProvider(segment, imageUrl).evict());
+      }
+    }
   }
 
   Widget _buildBook(BuildContext context, ReaderPageData page) {
@@ -788,6 +755,28 @@ class ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  /// 阅读图片的 provider；同一张图每次构造出的 provider 相等，便于按 key 释放缓存。
+  ImageProvider<Object> _readerImageProvider(
+    ReaderPageData page,
+    String imageUrl,
+  ) {
+    final Uri? parsedUri = Uri.tryParse(imageUrl);
+    if (parsedUri != null && parsedUri.scheme == 'file') {
+      return FileImage(File.fromUri(parsedUri));
+    }
+    if (parsedUri != null && parsedUri.scheme == treeImageScheme) {
+      return TreeImageProvider.fromUri(parsedUri);
+    }
+    if (parsedUri != null && parsedUri.scheme == 'content') {
+      return DocumentTreeImageProvider(imageUrl);
+    }
+    return CachedNetworkImageProvider(
+      imageUrl,
+      cacheManager: AppImageCaches.readerCache,
+      headers: AppImageCaches.readerImageHeaders(page.uri),
+    );
+  }
+
   Widget _buildReaderImageFrame(
     BuildContext context, {
     required ReaderPageData page,
@@ -804,26 +793,10 @@ class ReaderScreenState extends State<ReaderScreen> {
     fit ??= preferences.pageFit == ReaderPageFit.fitWidth
         ? BoxFit.fitWidth
         : BoxFit.contain;
-    final Uri? parsedUri = Uri.tryParse(imageUrl);
-    final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
-    final bool isDocumentTreeFile =
-        parsedUri != null && parsedUri.scheme == 'content';
-    final bool isDocumentTreeRelativeFile =
-        parsedUri != null && parsedUri.scheme == treeImageScheme;
-    final ImageProvider<Object> imageProvider;
-    if (isLocalFile) {
-      imageProvider = FileImage(File.fromUri(parsedUri));
-    } else if (isDocumentTreeRelativeFile) {
-      imageProvider = TreeImageProvider.fromUri(parsedUri);
-    } else if (isDocumentTreeFile) {
-      imageProvider = DocumentTreeImageProvider(imageUrl);
-    } else {
-      imageProvider = CachedNetworkImageProvider(
-        imageUrl,
-        cacheManager: AppImageCaches.readerCache,
-        headers: AppImageCaches.readerImageHeaders(page.uri),
-      );
-    }
+    final ImageProvider<Object> imageProvider = _readerImageProvider(
+      page,
+      imageUrl,
+    );
     return ColoredBox(
       color:
           color ??
@@ -882,15 +855,53 @@ class ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  Widget _buildContinuousSegmentComments(
+    BuildContext context,
+    ReaderPageData segment,
+  ) {
+    final List<ChapterComment> comments = _controller.commentsFor(segment);
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double commentCloudMaxHeight = screenSize.height > 188
+        ? screenSize.height - 108
+        : 80;
+    return Center(
+      key: _controller.commentSectionKeyForSegment(segment.uri),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: wideReaderMaxWidth(
+            context,
+            _controller.preferences.pageFit,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: commentCloudMaxHeight),
+                child: _buildReaderCommentCloud(
+                  context,
+                  segment,
+                  comments: comments,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _buildReaderCommentComposer(context, segment),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildReaderCommentTailPage(
     BuildContext context,
     ReaderPageData page, {
     double minHeight = 0,
   }) {
-    final List<ChapterComment> comments =
-        _controller.commentsChapterId == readerChapterIdForPage(page)
-        ? _controller.chapterComments
-        : const <ChapterComment>[];
+    final List<ChapterComment> comments = _controller.commentsFor(page);
     final Size screenSize = MediaQuery.sizeOf(context);
     final bool isPagedCommentPage = minHeight > 0;
     final double panelMaxHeight = isPagedCommentPage
@@ -903,14 +914,17 @@ class ReaderScreenState extends State<ReaderScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: commentCloudMaxHeight),
-          child: _buildReaderCommentCloud(context, page, comments: comments),
+        Flexible(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: commentCloudMaxHeight),
+            child: _buildReaderCommentCloud(context, page, comments: comments),
+          ),
         ),
         const SizedBox(height: 6),
         _buildReaderCommentComposer(context, page),
       ],
     );
+    final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
     if (isPagedCommentPage) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -921,7 +935,10 @@ class ReaderScreenState extends State<ReaderScreen> {
             children: <Widget>[
               const SizedBox(height: 12),
               Flexible(child: commentSection),
-              const SizedBox(height: 16),
+              if (hasNextChapter)
+                _buildReaderNextChapterFooter(context, page)
+              else
+                const SizedBox(height: 16),
             ],
           ),
         ),
@@ -936,8 +953,11 @@ class ReaderScreenState extends State<ReaderScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             const SizedBox(height: 12),
-            commentSection,
-            const SizedBox(height: 16),
+            Flexible(child: commentSection),
+            if (hasNextChapter)
+              _buildReaderNextChapterFooter(context, page)
+            else
+              const SizedBox(height: 16),
           ],
         ),
       ),
@@ -962,6 +982,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
       _controller.cancelAutoTurn();
+      _controller.hideChapterControls();
       return;
     }
     if (notification is ScrollEndNotification &&
@@ -975,7 +996,8 @@ class ReaderScreenState extends State<ReaderScreen> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (BuildContext context, Widget? _) {
-        final ReaderPageData page = widget.page;
+        // 连续阅读时当前章由滚动位置决定，可能比上层传进来的 page 更新。
+        final ReaderPageData page = _controller.page ?? widget.page;
         final ColorScheme colorScheme = Theme.of(context).colorScheme;
         final bool isZoomed = _controller.zoomScale > 1.01;
 
@@ -1013,6 +1035,9 @@ class ReaderScreenState extends State<ReaderScreen> {
               screenSize.height * (_controller.zoomScale - 1) / 2;
           readerContent = GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onDoubleTap: _controller.isZoomGestureLocked
+                ? null
+                : _controller.toggleChapterControls,
             dragStartBehavior: DragStartBehavior.down,
             onPanUpdate: (DragUpdateDetails details) {
               if (_controller.isScaleGestureActive) return;
@@ -1091,6 +1116,9 @@ class ReaderScreenState extends State<ReaderScreen> {
             onTapUp: _controller.isZoomGestureLocked
                 ? null
                 : _handleReaderTapUp,
+            onDoubleTap: _controller.isZoomGestureLocked
+                ? null
+                : _controller.toggleChapterControls,
             child: readerContent,
           );
         }
@@ -1117,7 +1145,8 @@ class ReaderScreenState extends State<ReaderScreen> {
                       ),
                     ),
                     _buildReaderOverlay(context, page),
-                    _buildChapterControlsOverlay(context, page),
+                    _buildReaderTopHudOverlay(context, page),
+                    _buildReaderBottomHudOverlay(context, page),
                   ],
                 ),
               ),

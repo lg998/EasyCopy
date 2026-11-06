@@ -11,9 +11,23 @@ extension _AppScreenNavigation on _AppScreenState {
 
   SitePage? get _page {
     final SitePage? page = _currentEntry.page;
-    return page == null
-        ? null
-        : BlockedContentFilter(_services.blockedContentStore).apply(page);
+    if (page == null) {
+      _nav.cachedRawPage = null;
+      _nav.cachedFilteredPage = null;
+      return null;
+    }
+    final int blockedRevision = _services.blockedContentStore.revision.value;
+    if (identical(page, _nav.cachedRawPage) &&
+        blockedRevision == _nav.cachedBlockedRevision) {
+      return _nav.cachedFilteredPage;
+    }
+    final SitePage filtered = BlockedContentFilter(
+      _services.blockedContentStore,
+    ).apply(page);
+    _nav.cachedRawPage = page;
+    _nav.cachedBlockedRevision = blockedRevision;
+    _nav.cachedFilteredPage = filtered;
+    return filtered;
   }
 
   bool get _isLoading => _currentEntry.isLoading;

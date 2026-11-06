@@ -281,9 +281,21 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     NavigationRequestContext? requestContext,
     int? targetTabIndex,
     bool switchToTab = true,
+    bool persistReaderNavigationToCache = true,
     Uri? visibleUri,
   }) {
-    final SitePage resolvedPage = _pageForVisibleUri(page, visibleUri);
+    final CachedChapterNavigationContext readerContext = page is ReaderPageData
+        ? _cachedChapterContext(
+            Uri.parse(page.uri),
+            preferredCatalogHref: page.catalogHref,
+          )
+        : const CachedChapterNavigationContext();
+    final SitePage resolvedPage = _pageForVisibleUri(
+      page is ReaderPageData
+          ? _mergeReaderPageNavigation(page, readerContext)
+          : page,
+      visibleUri,
+    );
     final Uri pageUri = AppConfig.rewriteToCurrentHost(
       Uri.parse(resolvedPage.uri),
     );
@@ -304,6 +316,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       }
       _tabSessionStore.updatePage(tabIndex, resolvedPage);
       if (resolvedPage is DetailPageData) {
+        _nav.readerCatalogs[AppConfig.routeKeyForUri(pageUri)] = resolvedPage;
         _detailChapters.sync(
           resolvedPage,
           forceReset:
@@ -326,6 +339,17 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       );
     }
     if (resolvedPage is ReaderPageData) {
+      if (!readerContext.isResolved && requestContext != null) {
+        unawaited(
+          _repairCachedReaderNavigation(
+            resolvedPage,
+            targetUri: pageUri,
+            context: readerContext,
+            requestContext: requestContext,
+            persistToPageCache: persistReaderNavigationToCache,
+          ),
+        );
+      }
       return true;
     }
     final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(tabIndex);
@@ -538,17 +562,6 @@ extension _AppScreenPageLoadActions on _AppScreenState {
                   _didReaderNavigationChange(cachedPage, preparedPage)) {
                 unawaited(_persistReaderPageCache(preparedPage));
               }
-              if (preparedPage.hasMissingChapterNavigation) {
-                unawaited(
-                  _repairCachedReaderNavigation(
-                    preparedPage,
-                    targetUri: targetUri,
-                    context: resolvedCachedContext,
-                    requestContext: requestContext,
-                    persistToPageCache: true,
-                  ),
-                );
-              }
             }
           }
           if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
@@ -700,6 +713,9 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     final Uri resolvedTargetUri = _profileUriWithSort(
       targetUri ?? AppConfig.profileUri,
     );
+    _library.collectionsLoadMoreGeneration += 1;
+    _library.isLoadingMoreCollections = false;
+    _library.collectionsLoadMoreError = null;
     const int profileTabIndex = 3;
     final NavigationRequestContext requestContext = _prepareRouteEntry(
       resolvedTargetUri,
@@ -804,15 +820,22 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       return true;
     }
     if (cachedHit != null && cachedHit.page is ProfilePageData) {
+      final ProfilePageData cachedProfile = cachedHit.page as ProfilePageData;
       _applyLoadedPage(
-        cachedHit.page,
+        cachedProfile,
         requestContext: requestContext,
         switchToTab: _shouldActivateAsyncResultTab(
           requestContext.targetTabIndex,
         ),
         visibleUri: targetUri,
       );
-      if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
+      final bool missingCollectionMetadata =
+          key.authScope != LocalLibraryStore.guestScope &&
+          cachedProfile.collections.any(
+            (ProfileLibraryItem item) => item.comicId.isEmpty,
+          );
+      if (!cachedHit.envelope.isSoftExpired(DateTime.now()) &&
+          !missingCollectionMetadata) {
         return true;
       }
       final NavigationRequestContext revalidateContext = requestContext

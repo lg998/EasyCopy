@@ -285,6 +285,7 @@ extension _AppScreenStandardMode on _AppScreenState {
         child: NotificationListener<ScrollNotification>(
           onNotification: (ScrollNotification notification) {
             _updateBottomBarVisibility(notification);
+            _maybeLoadMoreCollectionsOnScroll(notification);
             return _scrollState.handleScrollNotification(
               notification,
               onUserInteraction: _noteViewportInteraction,

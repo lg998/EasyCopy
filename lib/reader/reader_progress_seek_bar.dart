@@ -8,6 +8,10 @@ class ReaderProgressSeekBar extends StatefulWidget {
     required this.totalCount,
     required this.onSeek,
     this.onInteraction,
+    this.labelColor,
+    this.activeTrackColor,
+    this.inactiveTrackColor,
+    this.thumbColor,
     super.key,
   });
 
@@ -15,6 +19,10 @@ class ReaderProgressSeekBar extends StatefulWidget {
   final int totalCount;
   final VoidCallback? onInteraction;
   final ValueChanged<int> onSeek;
+  final Color? labelColor;
+  final Color? activeTrackColor;
+  final Color? inactiveTrackColor;
+  final Color? thumbColor;
 
   @override
   State<ReaderProgressSeekBar> createState() => _ReaderProgressSeekBarState();
@@ -79,30 +87,39 @@ class _ReaderProgressSeekBarState extends State<ReaderProgressSeekBar> {
     }
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final int current = _value.round().clamp(0, _maxIndex);
+    final Color resolvedLabelColor =
+        widget.labelColor ?? colorScheme.onSurface.withValues(alpha: 0.76);
     final TextStyle numberStyle = TextStyle(
-      color: colorScheme.onSurface.withValues(alpha: 0.76),
+      color: resolvedLabelColor,
       fontSize: 12,
-      fontWeight: FontWeight.w800,
+      fontWeight: FontWeight.w700,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
     );
     return Row(
       children: <Widget>[
         SizedBox(
-          width: 34,
+          width: 30,
           child: Text(
             '${current + 1}',
-            textAlign: TextAlign.center,
+            textAlign: TextAlign.end,
+            maxLines: 1,
+            softWrap: false,
             style: numberStyle,
           ),
         ),
         Expanded(
           child: SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              trackHeight: 2.2,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-              inactiveTrackColor: colorScheme.outlineVariant.withValues(
-                alpha: 0.65,
-              ),
+              trackHeight: 2.5,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7.5),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
+              activeTrackColor: widget.activeTrackColor,
+              thumbColor: widget.thumbColor ?? widget.activeTrackColor,
+              overlayColor: (widget.thumbColor ?? widget.activeTrackColor)
+                  ?.withValues(alpha: 0.22),
+              inactiveTrackColor:
+                  widget.inactiveTrackColor ??
+                  colorScheme.outlineVariant.withValues(alpha: 0.65),
             ),
             child: Slider(
               value: _value.clamp(0, _maxIndex.toDouble()),
@@ -115,10 +132,12 @@ class _ReaderProgressSeekBarState extends State<ReaderProgressSeekBar> {
           ),
         ),
         SizedBox(
-          width: 34,
+          width: 30,
           child: Text(
             '${widget.totalCount}',
-            textAlign: TextAlign.center,
+            textAlign: TextAlign.start,
+            maxLines: 1,
+            softWrap: false,
             style: numberStyle,
           ),
         ),

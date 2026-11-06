@@ -291,9 +291,9 @@ class DetailHeroCard extends StatelessWidget {
   }
 
   Widget _buildSummary() {
-    return Text(
-      ChineseConverter.instance.convert(page.summary),
-      style: const TextStyle(height: 1.7),
+    return ExpandableSummary(
+      key: ValueKey<String>(page.uri),
+      text: page.summary,
     );
   }
 

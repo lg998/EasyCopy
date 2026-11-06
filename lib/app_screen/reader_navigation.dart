@@ -73,18 +73,23 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     }
     final List<PrimaryTabRouteEntry> stackEntries = _tabSessionStore
         .stackForTab(_nav.selectedIndex);
-    final List<DetailPageData> detailPages = stackEntries
-        .map((PrimaryTabRouteEntry entry) => entry.page)
-        .whereType<DetailPageData>()
-        .toList(growable: false)
-        .reversed
-        .toList(growable: false);
+    final List<DetailPageData> detailPages = <DetailPageData>[
+      ...stackEntries
+          .map((PrimaryTabRouteEntry entry) => entry.page)
+          .whereType<DetailPageData>()
+          .toList(growable: false)
+          .reversed,
+      ..._nav.readerCatalogs.values,
+    ];
     if (detailPages.isEmpty) {
       return const CachedChapterNavigationContext();
     }
 
     CachedChapterNavigationContext contextForPage(DetailPageData page) {
-      final List<ChapterData> chapters = _detailChapterList(page);
+      final List<ChapterData> chapters = ChapterNavigation.sequenceFor(
+        page,
+        targetUri.toString(),
+      );
       final int index = chapters.indexWhere(
         (ChapterData chapter) =>
             _chapterKeys.pathKey(chapter.href) == targetKey,
@@ -96,6 +101,7 @@ extension _AppScreenReaderNavigation on _AppScreenState {
         prevHref: index > 0 ? chapters[index - 1].href : '',
         nextHref: index + 1 < chapters.length ? chapters[index + 1].href : '',
         catalogHref: page.uri,
+        isResolved: true,
       );
     }
 
@@ -128,6 +134,13 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     ReaderPageData page,
     CachedChapterNavigationContext context,
   ) {
+    if (context.isResolved) {
+      return page.copyWith(
+        prevHref: context.prevHref,
+        nextHref: context.nextHref,
+        catalogHref: context.catalogHref,
+      );
+    }
     return page.mergeMissingNavigation(
       prevHref: context.prevHref,
       nextHref: context.nextHref,
@@ -170,11 +183,16 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     Uri uri, {
     required String authScope,
   }) async {
+    final String routeKey = AppConfig.routeKeyForUri(uri);
+    final DetailPageData? known = _nav.readerCatalogs[routeKey];
+    if (known != null) return known;
     final SitePage page = await _pageRepository.loadFresh(
       uri,
       authScope: authScope,
     );
-    return page is DetailPageData ? page : null;
+    if (page is! DetailPageData) return null;
+    _nav.readerCatalogs[routeKey] = page;
+    return page;
   }
 
   Future<void> _repairCachedReaderNavigation(
@@ -184,7 +202,7 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     required NavigationRequestContext requestContext,
     required bool persistToPageCache,
   }) async {
-    if (!page.hasMissingChapterNavigation) {
+    if (context.isResolved) {
       return;
     }
     final PageQueryKey key = _pageQueryKeyForUri(targetUri);
@@ -258,23 +276,117 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     if (cachedPage == null) {
       return false;
     }
-    final bool applied = _applyLoadedPage(
+    return _applyLoadedPage(
       cachedPage,
       requestContext: requestContext,
       switchToTab: true,
+      persistReaderNavigationToCache: false,
     );
-    if (applied && cachedPage.hasMissingChapterNavigation) {
-      unawaited(
-        _repairCachedReaderNavigation(
-          cachedPage,
-          targetUri: targetUri,
-          context: resolvedContext,
-          requestContext: requestContext,
-          persistToPageCache: false,
-        ),
+  }
+
+  /// 连续阅读：只加载下一章的数据，不切换路由、不改动当前页面。
+  ///
+  /// 加载顺序与正常打开章节一致：已下载的本地章节 → 页面缓存 → 网络。
+  Future<ReaderPageData?> _loadContinuousReaderChapter(
+    String href, {
+    required String prevHref,
+    required String catalogHref,
+  }) async {
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(
+      AppConfig.resolveNavigationUri(href, currentUri: _currentUri),
+    );
+    if (!isReaderChapterUri(targetUri)) {
+      return null;
+    }
+    final CachedChapterNavigationContext context =
+        CachedChapterNavigationContext(
+          prevHref: prevHref,
+          catalogHref: catalogHref,
+        ).mergeMissing(
+          _cachedChapterContext(targetUri, preferredCatalogHref: catalogHref),
+        );
+    final bool bypassLocalCaches =
+        _downloadQueueManager.shouldBypassCachedReaderLookup;
+    final PageQueryKey key = _pageQueryKeyForUri(targetUri);
+    DebugTrace.log('reader.continuous_load_start', <String, Object?>{
+      'bootId': _shell.bootId,
+      'uri': targetUri.toString(),
+    });
+
+    ReaderPageData? cachedReaderPage;
+    if (!bypassLocalCaches) {
+      cachedReaderPage = await _services.downloadService.loadCachedReaderPage(
+        targetUri.toString(),
+        prevHref: context.prevHref,
+        nextHref: context.nextHref,
+        catalogHref: context.catalogHref,
       );
     }
-    return applied;
+    ReaderPageData page;
+    if (cachedReaderPage != null) {
+      page = cachedReaderPage;
+    } else {
+      final CachedPageHit? cachedHit = bypassLocalCaches
+          ? null
+          : await _pageRepository.readCached(key);
+      final SitePage? cachedPage = cachedHit?.page;
+      if (cachedPage is ReaderPageData && cachedPage.imageUrls.isNotEmpty) {
+        page = cachedPage;
+      } else {
+        final SitePage freshPage = await _pageRepository.loadFresh(
+          targetUri,
+          authScope: key.authScope,
+        );
+        if (freshPage is! ReaderPageData || freshPage.imageUrls.isEmpty) {
+          return null;
+        }
+        page = freshPage;
+      }
+    }
+    page = _mergeReaderPageNavigation(page, context);
+    if (!context.isResolved) {
+      try {
+        page = await ReaderNavigationRepairer.repair(
+          page,
+          authScope: key.authScope,
+          preferredCatalogHref: context.catalogHref,
+          loadReaderPage: _loadRepairReaderPage,
+          loadDetailPage: _loadRepairDetailPage,
+        );
+      } catch (_) {
+        // 修复失败只是拿不到再下一章的链接，本章仍可阅读。
+      }
+    }
+    DebugTrace.log('reader.continuous_load_complete', <String, Object?>{
+      'bootId': _shell.bootId,
+      'uri': page.uri,
+      'imageCount': page.imageUrls.length,
+      'hasNext': page.nextHref.trim().isNotEmpty,
+    });
+    return page;
+  }
+
+  /// 连续阅读：滚动进入另一章后，把它记为当前路由（返回、重启恢复都以它为准），
+  /// 但不重新加载阅读页。
+  void _commitContinuousReaderChapter(ReaderPageData page) {
+    if (!mounted || _page is! ReaderPageData) {
+      return;
+    }
+    final int tabIndex = _nav.selectedIndex;
+    final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
+    _mutateSessionState(() {
+      // 旧章节的后台刷新 / 导航修复不能再覆盖当前章。
+      _abandonCurrentRequest(tabIndex, phase: 'continuous-reader');
+      _tabSessionStore.updateCurrent(
+        tabIndex,
+        (PrimaryTabRouteEntry entry) => entry.copyWith(
+          uri: pageUri,
+          page: page,
+          isLoading: false,
+          clearError: true,
+        ),
+      );
+    });
   }
 
   void _openDetailChapter(DetailPageData page, String href) {
@@ -311,7 +423,10 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     DetailPageData page,
     String href,
   ) {
-    final List<ChapterData> chapters = _detailChapterList(page);
+    final List<ChapterData> chapters = ChapterNavigation.sequenceFor(
+      page,
+      href,
+    );
     final String targetKey = _chapterKeys.pathKey(href);
     final int index = chapters.indexWhere(
       (ChapterData chapter) => _chapterKeys.pathKey(chapter.href) == targetKey,
@@ -354,6 +469,22 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       _nav.selectedIndex,
     );
     if (previousEntry != null) {
+      if (previousEntry.page is ProfilePageData &&
+          AppConfig.profileSubviewForUri(previousEntry.uri) ==
+              ProfileSubview.collections) {
+        _mutateSessionState(() {
+          _abandonCurrentRequest(
+            _nav.selectedIndex,
+            phase: 'restore-collections',
+          );
+        });
+        _scrollState.restoreStandardScrollPosition(
+          previousEntry.standardScrollOffset,
+          tabIndex: _nav.selectedIndex,
+          routeKey: previousEntry.routeKey,
+        );
+        return;
+      }
       await _loadUri(
         previousEntry.uri,
         preserveVisiblePage: _page != null,
@@ -363,8 +494,8 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       );
       return;
     }
-    if (_nav.selectedIndex != 0) {
-      await _loadHome();
+    if (_nav.selectedIndex != AppConfig.defaultPrimaryTabIndex) {
+      await _onItemTapped(AppConfig.defaultPrimaryTabIndex);
       return;
     }
     if (_shouldConfirmBackToExit()) {
@@ -474,7 +605,77 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     return cachedEntry?.coverUrl ?? '';
   }
 
-  bool get _isReaderMode => _page is ReaderPageData;
+  Future<void> _handleReaderExitToHome() async {
+    await _runReaderExitTransition(() async {
+      final SitePage? page = _page;
+      if (page is ReaderPageData) {
+        await _ui.readerScreenKey.currentState?.controller
+            .flushProgressPersistence();
+      }
+      await _onItemTapped(_nav.selectedIndex);
+    });
+  }
+
+  Future<void> _reloadReaderChapter(ReaderPageData currentPage) async {
+    await _ui.readerScreenKey.currentState?.controller
+        .flushProgressPersistence();
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(
+      Uri.parse(currentPage.uri),
+    );
+    await _loadUri(
+      targetUri,
+      bypassCache: true,
+      preserveVisiblePage: false,
+      skipPersistVisiblePageState: true,
+      sourceTabIndex: _nav.selectedIndex,
+      historyMode: NavigationIntent.preserve,
+      cachedChapterContext: CachedChapterNavigationContext(
+        prevHref: currentPage.prevHref,
+        nextHref: currentPage.nextHref,
+        catalogHref: currentPage.catalogHref,
+      ),
+    );
+  }
+
+  Future<DetailPageData?> _loadReaderCatalogDetail(
+    ReaderPageData currentPage,
+  ) async {
+    final String catalogHref = currentPage.catalogHref.trim();
+    if (catalogHref.isEmpty) {
+      return null;
+    }
+    final Uri catalogUri = AppConfig.rewriteToCurrentHost(
+      AppConfig.resolveNavigationUri(
+        catalogHref,
+        currentUri: Uri.parse(currentPage.uri),
+      ),
+    );
+    final String targetRouteKey = AppConfig.routeKeyForUri(catalogUri);
+    for (final PrimaryTabRouteEntry entry
+        in _tabSessionStore.stackForTab(_nav.selectedIndex).reversed) {
+      final SitePage? entryPage = entry.page;
+      if (entryPage is DetailPageData &&
+          AppConfig.routeKeyForUri(Uri.parse(entryPage.uri)) ==
+              targetRouteKey &&
+          _detailChapterList(entryPage).isNotEmpty) {
+        return entryPage;
+      }
+    }
+    final PageQueryKey key = _pageQueryKeyForUri(catalogUri);
+    final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
+    final SitePage? cachedPage = cachedHit?.page;
+    if (cachedPage is DetailPageData &&
+        _detailChapterList(cachedPage).isNotEmpty) {
+      return cachedPage;
+    }
+    final SitePage freshPage = await _pageRepository.loadFresh(
+      catalogUri,
+      authScope: key.authScope,
+    );
+    return freshPage is DetailPageData ? freshPage : null;
+  }
+
+  bool get _isReaderMode => _currentEntry.page is ReaderPageData;
 
   Widget _buildReaderLoadingScreen(BuildContext context) {
     return Scaffold(

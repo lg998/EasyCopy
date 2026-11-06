@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:reader/app_screen/widgets.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/blocked_content.dart';
@@ -18,6 +19,7 @@ import 'package:reader/widgets/settings_page_scaffold.dart';
 import 'package:reader/widgets/settings_ui.dart';
 
 part 'profile_page_view/appearance_wallpaper.dart';
+part 'profile_page_view/bookshelf_section.dart';
 part 'profile_page_view/host_settings_page.dart';
 part 'profile_page_view/profile_sections.dart';
 part 'profile_page_view/wallpaper_crop_editor.dart';
@@ -86,6 +88,9 @@ class ProfilePageView extends StatelessWidget {
     this.afterContinueReading,
     this.cachedComicCards = const <ComicCardData>[],
     this.activeSubview = ProfileSubview.root,
+    this.hasCollectionUnreadUpdate,
+    this.collectionProgressListenable,
+    this.onRemoveCollections,
     super.key,
   });
 
@@ -131,6 +136,10 @@ class ProfilePageView extends StatelessWidget {
   final Widget? afterContinueReading;
   final List<ComicCardData> cachedComicCards;
   final ProfileSubview activeSubview;
+  final bool Function(ProfileLibraryItem item)? hasCollectionUnreadUpdate;
+  final Listenable? collectionProgressListenable;
+  final Future<bool> Function(List<ProfileLibraryItem> items)?
+  onRemoveCollections;
   static const double _libraryPreviewHeight = 204;
   static const double _libraryPreviewWidth = 100;
 
@@ -177,14 +186,7 @@ class ProfilePageView extends StatelessWidget {
 
     switch (activeSubview) {
       case ProfileSubview.collections:
-        return _buildComicCollectionSection(
-          items: collectionCards,
-          emptyMessage: '还没有收藏的漫画。',
-          onTap: onOpenComic,
-          isLoading: isLoading,
-          pager: page.collectionsPager,
-          onOpenPage: onOpenCollectionsPage,
-        );
+        return const SizedBox.shrink();
       case ProfileSubview.history:
         return _buildComicCollectionSection(
           items: historyCards,
@@ -420,7 +422,7 @@ class ProfilePageView extends StatelessWidget {
         if (authors.isNotEmpty) _buildBlockedGroup(context, '作者', authors),
         if (_shouldShowPager(page.blockedPager)) ...<Widget>[
           const SizedBox(height: 16),
-          _ProfilePagerBar(
+          _buildCompactPager(
             pager: page.blockedPager,
             onOpenPage: onOpenBlockedPageNumber,
           ),
@@ -511,9 +513,26 @@ class ProfilePageView extends StatelessWidget {
         ),
         if (!isLoading && _shouldShowPager(pager)) ...<Widget>[
           const SizedBox(height: 16),
-          _ProfilePagerBar(pager: pager, onOpenPage: onOpenPage),
+          _buildCompactPager(pager: pager, onOpenPage: onOpenPage),
         ],
       ],
+    );
+  }
+
+  Widget _buildCompactPager({
+    required PagerData pager,
+    ValueChanged<int>? onOpenPage,
+  }) {
+    final int currentPage = pager.currentPageNumber ?? 1;
+    return PagerCard(
+      pager: pager,
+      onPrev: pager.hasPrev && onOpenPage != null
+          ? () => onOpenPage(currentPage - 1)
+          : null,
+      onNext: pager.hasNext && onOpenPage != null
+          ? () => onOpenPage(currentPage + 1)
+          : null,
+      onJumpToPage: onOpenPage,
     );
   }
 
@@ -600,72 +619,6 @@ class _ProfileListLoader extends StatelessWidget {
     return const SizedBox(
       height: 260,
       child: Center(child: CircularProgressIndicator()),
-    );
-  }
-}
-
-class _ProfilePagerBar extends StatelessWidget {
-  const _ProfilePagerBar({required this.pager, this.onOpenPage});
-
-  final PagerData pager;
-  final ValueChanged<int>? onOpenPage;
-
-  @override
-  Widget build(BuildContext context) {
-    final int currentPage = pager.currentPageNumber ?? 1;
-    final int totalPages = pager.totalPageCount ?? 1;
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: FilledButton.tonal(
-              onPressed: pager.hasPrev && onOpenPage != null
-                  ? () => onOpenPage!(currentPage - 1)
-                  : null,
-              child: const Text('上一页'),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  '$currentPage / $totalPages',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                if (pager.totalLabel.isNotEmpty)
-                  Text(
-                    pager.totalLabel,
-                    style: TextStyle(
-                      color: colorScheme.onSurface.withValues(alpha: 0.68),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: FilledButton(
-              onPressed: pager.hasNext && onOpenPage != null
-                  ? () => onOpenPage!(currentPage + 1)
-                  : null,
-              child: const Text('下一页'),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

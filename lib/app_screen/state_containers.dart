@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/reader/reader_screen.dart';
@@ -45,13 +46,17 @@ class AppScreenUiState {
 }
 
 class AppNavigationState {
-  int selectedIndex = 0;
+  int selectedIndex = AppConfig.defaultPrimaryTabIndex;
   int activeLoadId = 0;
   int nextNavigationRequestId = 0;
   int discardedNavigationCommitCount = 0;
   int discardedCallbackCount = 0;
   int supersededRequestCount = 0;
   final Set<String> repairRouteKeys = <String>{};
+  final Map<String, DetailPageData> readerCatalogs = <String, DetailPageData>{};
+  SitePage? cachedRawPage;
+  int cachedBlockedRevision = -1;
+  SitePage? cachedFilteredPage;
 }
 
 class AppWebViewState {
@@ -80,6 +85,10 @@ class AppLibraryState {
   Future<void>? refreshTask;
   CacheLibraryRefreshReason? pendingRefresh;
   bool queuedForceRescan = false;
+  bool isLoadingMoreCollections = false;
+  bool onlyUnreadCollections = false;
+  String? collectionsLoadMoreError;
+  int collectionsLoadMoreGeneration = 0;
 
   void dispose() {
     cachedComicsNotifier.dispose();

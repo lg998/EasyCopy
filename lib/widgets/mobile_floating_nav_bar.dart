@@ -129,14 +129,10 @@ class MobileFloatingNavBar extends StatelessWidget {
         return IgnorePointer(
           ignoring: !visible,
           child: AnimatedSlide(
-            duration: const Duration(milliseconds: 300),
+            duration: const Duration(milliseconds: 260),
             curve: visible ? Curves.easeOutCubic : Curves.easeInCubic,
             offset: visible ? Offset.zero : const Offset(0, 1.8),
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 240),
-              opacity: visible ? 1 : 0,
-              child: child,
-            ),
+            child: child,
           ),
         );
       },

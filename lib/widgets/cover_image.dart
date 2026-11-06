@@ -8,6 +8,7 @@ class CoverImage extends StatelessWidget {
     this.aspectRatio,
     this.borderRadius = 20,
     this.fit = BoxFit.cover,
+    this.logicalWidth,
     super.key,
   });
 
@@ -15,44 +16,68 @@ class CoverImage extends StatelessWidget {
   final double? aspectRatio;
   final double borderRadius;
   final BoxFit fit;
+  final double? logicalWidth;
 
   @override
   Widget build(BuildContext context) {
+    final double? knownWidth = logicalWidth;
+    if (knownWidth != null && knownWidth.isFinite && knownWidth > 0) {
+      return _buildClippedImage(
+        context,
+        memCacheWidth: _cacheWidthForLogical(context, knownWidth),
+      );
+    }
+
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        Widget child = imageUrl.isEmpty
-            ? const PlaceholderImage()
-            : CachedNetworkImage(
-                imageUrl: imageUrl,
-                fit: fit,
-                memCacheWidth: _coverCacheWidth(context, constraints),
-                cacheManager: AppImageCaches.coverCache,
-                placeholder: (_, __) => const CoverSkeleton(),
-                errorWidget: (_, __, ___) => const PlaceholderImage(),
-              );
-
-        if (aspectRatio != null) {
-          child = AspectRatio(aspectRatio: aspectRatio!, child: child);
-        }
-
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(borderRadius),
-          child: child,
+        return _buildClippedImage(
+          context,
+          memCacheWidth: _coverCacheWidth(context, constraints),
         );
       },
     );
   }
 
-  int? _coverCacheWidth(BuildContext context, BoxConstraints constraints) {
-    final double logicalWidth = constraints.hasBoundedWidth
-        ? constraints.maxWidth
-        : MediaQuery.sizeOf(context).width;
-    if (!logicalWidth.isFinite || logicalWidth <= 0) {
-      return null;
+  Widget _buildClippedImage(
+    BuildContext context, {
+    required int? memCacheWidth,
+  }) {
+    Widget child = imageUrl.isEmpty
+        ? const PlaceholderImage()
+        : CachedNetworkImage(
+            imageUrl: imageUrl,
+            fit: fit,
+            memCacheWidth: memCacheWidth,
+            cacheManager: AppImageCaches.coverCache,
+            fadeInDuration: const Duration(milliseconds: 120),
+            fadeOutDuration: Duration.zero,
+            placeholder: (_, __) => const CoverSkeleton(),
+            errorWidget: (_, __, ___) => const PlaceholderImage(),
+          );
+
+    if (aspectRatio != null) {
+      child = AspectRatio(aspectRatio: aspectRatio!, child: child);
     }
 
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: child,
+    );
+  }
+
+  int _cacheWidthForLogical(BuildContext context, double width) {
     final double devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
-    return (logicalWidth * devicePixelRatio).ceil().clamp(160, 720).toInt();
+    return (width * devicePixelRatio).ceil().clamp(160, 720).toInt();
+  }
+
+  int? _coverCacheWidth(BuildContext context, BoxConstraints constraints) {
+    final double width = constraints.hasBoundedWidth
+        ? constraints.maxWidth
+        : MediaQuery.sizeOf(context).width;
+    if (!width.isFinite || width <= 0) {
+      return null;
+    }
+    return _cacheWidthForLogical(context, width);
   }
 }
 

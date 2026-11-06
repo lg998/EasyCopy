@@ -384,72 +384,54 @@ extension _AppScreenPageSections on _AppScreenState {
     if (page.categories.isNotEmpty || page.periods.isNotEmpty) {
       sections.add(
         _hPaddedBox(
-          AppSurfaceCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                if (page.categories.isNotEmpty)
-                  RankFilterGroup(
-                    items: page.categories,
-                    onTap: _navigateRankFilter,
-                  ),
-                if (page.categories.isNotEmpty && page.periods.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Builder(
-                      builder: (BuildContext context) {
-                        return Container(
-                          height: 1,
-                          color: Theme.of(context).dividerColor,
-                        );
-                      },
-                    ),
-                  ),
-                if (page.periods.isNotEmpty)
-                  RankFilterGroup(
-                    items: page.periods,
-                    onTap: _navigateRankFilter,
-                  ),
-              ],
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              if (page.categories.isNotEmpty)
+                RankTabRow(
+                  items: page.categories,
+                  onTap: _navigateRankFilter,
+                ),
+              if (page.categories.isNotEmpty && page.periods.isNotEmpty)
+                const SizedBox(height: 4),
+              if (page.periods.isNotEmpty)
+                RankTabRow(items: page.periods, onTap: _navigateRankFilter),
+            ],
           ),
         ),
       );
-      sections.add(_hPaddedBox(const SizedBox(height: 18)));
+      sections.add(_hPaddedBox(const SizedBox(height: 8)));
     }
 
-    sections.add(
-      _hPaddedBox(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const SectionHeader(title: '榜单列表'),
-            if (_isLoading) _buildInlineLoader(),
-          ],
-        ),
-      ),
-    );
+    if (_isLoading) {
+      sections.add(_hPaddedBox(_buildInlineLoader()));
+    }
+    final bool isWide = usesWideLayout(context);
+    final double itemExtent =
+        RankCard.cardHeightFor(MediaQuery.textScalerOf(context)) + 4;
     sections.add(
       _hPaddedSliver(
-        SliverList(
+        SliverFixedExtentList(
           key: ValueKey<String>(_rankListContentKey(page)),
+          itemExtent: itemExtent,
           delegate: SliverChildBuilderDelegate(
             (BuildContext context, int index) {
               final RankEntryData item = page.items[index];
+              final Widget card = RankCard(
+                item: item,
+                onTap: () => _navigateToHref(item.href),
+              );
               return Padding(
-                padding: EdgeInsets.only(
-                  bottom: index == page.items.length - 1 ? 0 : 12,
-                ),
+                padding: const EdgeInsets.only(bottom: 4),
                 child: RepaintBoundary(
-                  child: StaggerIn(
-                    key: ValueKey<String>(item.href),
-                    index: index,
-                    enabled: usesWideLayout(context),
-                    child: RankCard(
-                      item: item,
-                      onTap: () => _navigateToHref(item.href),
-                    ),
-                  ),
+                  child: isWide
+                      ? StaggerIn(
+                          key: ValueKey<String>(item.href),
+                          index: index,
+                          enabled: true,
+                          child: card,
+                        )
+                      : card,
                 ),
               );
             },
