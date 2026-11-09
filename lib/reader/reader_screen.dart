@@ -1144,13 +1144,21 @@ class _ReaderClockLabelState extends State<_ReaderClockLabel> {
   void initState() {
     super.initState();
     _label = _formatNow();
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
+    _scheduleNextTick();
+  }
+
+  void _scheduleNextTick() {
+    _timer?.cancel();
+    final DateTime now = DateTime.now();
+    final int delayMs = (60 - now.second) * 1000 - now.millisecond;
+    _timer = Timer(Duration(milliseconds: math.max(100, delayMs)), () {
       if (!mounted) {
         return;
       }
       setState(() {
         _label = _formatNow();
       });
+      _scheduleNextTick();
     });
   }
 
