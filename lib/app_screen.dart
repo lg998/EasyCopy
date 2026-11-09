@@ -472,6 +472,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    ReaderScreen.recordTopSafeInset(MediaQuery.viewPaddingOf(context).top);
     final SitePage? page = _page;
     final bool isReaderRoute =
         page is ReaderPageData || isReaderChapterUri(_currentUri);
