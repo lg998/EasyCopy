@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          version_line="$(sed -nE 's/^version:[[:space:]]+(.+)$/\1/p' pubspec.yaml | head -n1)"
+          version_line="$(tr -d '\r' < pubspec.yaml | sed -nE 's/^version:[[:space:]]+(.+)$/\1/p' | head -n1)"
           if [[ -z "$version_line" ]]; then
             echo "Could not read version from pubspec.yaml." >&2
             exit 1
