@@ -116,6 +116,8 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class ReaderScreenState extends State<ReaderScreen> {
+  static double _cachedPortraitTopSafeInset = 0;
+
   late final ReaderController _controller;
   final ScrollController _settingsSheetScrollController = ScrollController();
   GlobalKey<ReaderBookState> _bookKey = GlobalKey<ReaderBookState>();
@@ -259,42 +261,80 @@ class ReaderScreenState extends State<ReaderScreen> {
     _controller.setSettingsSheetOpen(false);
   }
 
-  Widget _buildReaderOverlay(BuildContext context, ReaderPageData page) {
-    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
+  double _readerTopSafeInset(BuildContext context) {
+    final Size size = MediaQuery.sizeOf(context);
+    final bool isPortrait = size.height >= size.width;
+    final double viewTop = MediaQuery.viewPaddingOf(context).top;
+    if (isPortrait && viewTop > 0) {
+      _cachedPortraitTopSafeInset = math.max(
+        _cachedPortraitTopSafeInset,
+        viewTop,
+      );
+    }
+    if (!isPortrait) {
+      return viewTop;
+    }
+    if (viewTop > 0) {
+      return viewTop;
+    }
+    if (_cachedPortraitTopSafeInset > 0) {
+      return _cachedPortraitTopSafeInset;
+    }
+    if (_controller.platformBridge.isAndroidSupported) {
+      return 36;
+    }
+    return 0;
+  }
+
+  Widget _buildReaderOverlay(
+    BuildContext context,
+    ReaderPageData page, {
+    required double topSafeInset,
+  }) {
     final ReaderPreferences preferences = _controller.preferences;
-    final double topOffset = preferences.fullscreen ? 2 : viewPadding.top + 6;
     final int? batteryLevel = _controller.batteryLevel;
     final bool hideTopStatus = _controller.isChapterControlsVisible;
+    final List<Widget> statusItems = <Widget>[
+      if (preferences.showProgress)
+        ReaderStatusLabel(
+          label: _readerPageCountLabel(page),
+          fontSize: 12,
+        ),
+      if (_controller.platformBridge.isAndroidSupported &&
+          preferences.showBattery)
+        ReaderStatusLabel(
+          label: batteryLevel == null ? '--%' : '$batteryLevel%',
+          icon: Icons.bolt_rounded,
+          fontSize: 12,
+        ),
+      if (preferences.showClock) const _ReaderClockLabel(),
+    ];
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
-          if (_controller.platformBridge.isAndroidSupported &&
-              preferences.showBattery &&
-              !hideTopStatus)
+          if (statusItems.isNotEmpty && !hideTopStatus)
             Positioned(
-              left: 8,
-              top: topOffset,
-              child: ReaderStatusLabel(
-                label: batteryLevel == null ? '--%' : '$batteryLevel%',
-                icon: Icons.bolt_rounded,
-                fontSize: 14,
-              ),
-            ),
-          if (preferences.showClock && !hideTopStatus)
-            Positioned(
-              right: 8,
-              top: topOffset,
-              child: const _ReaderClockLabel(),
-            ),
-          if (preferences.showProgress && !hideTopStatus)
-            Positioned(
-              left: 0,
-              right: 0,
-              top: topOffset,
-              child: Center(
-                child: ReaderStatusLabel(
-                  label: _readerPageCountLabel(page),
-                  fontSize: 15,
+              top: topSafeInset + 6,
+              right: 6,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0x7A000000),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      for (int i = 0; i < statusItems.length; i += 1) ...<Widget>[
+                        if (i > 0) const SizedBox(width: 8),
+                        statusItems[i],
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -549,7 +589,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     final bool reverse =
         prefs.readingDirection == ReaderReadingDirection.rightToLeft;
     return SafeArea(
-      top: !prefs.fullscreen,
+      top: false,
       bottom: !prefs.fullscreen,
       child: Padding(
         padding: EdgeInsets.all(prefs.showPageGap ? 8 : 0),
@@ -1123,6 +1163,8 @@ class ReaderScreenState extends State<ReaderScreen> {
           );
         }
 
+        final double topSafeInset = _readerTopSafeInset(context);
+
         return AnimatedOpacity(
           opacity: widget.isExitTransitionActive ? 0 : 1,
           duration: _readerExitFadeDuration,
@@ -1136,7 +1178,11 @@ class ReaderScreenState extends State<ReaderScreen> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: <Widget>[
-                    Positioned.fill(
+                    Positioned(
+                      top: topSafeInset,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
                       child: ReaderPinchZoomDetector(
                         onPinchStart: _controller.handlePinchZoomStart,
                         onPinchUpdate: _controller.handlePinchZoomUpdate,
@@ -1144,7 +1190,11 @@ class ReaderScreenState extends State<ReaderScreen> {
                         child: readerContent,
                       ),
                     ),
-                    _buildReaderOverlay(context, page),
+                    _buildReaderOverlay(
+                      context,
+                      page,
+                      topSafeInset: topSafeInset,
+                    ),
                     _buildReaderTopHudOverlay(context, page),
                     _buildReaderBottomHudOverlay(context, page),
                   ],
@@ -1198,6 +1248,6 @@ class _ReaderClockLabelState extends State<_ReaderClockLabel> {
 
   @override
   Widget build(BuildContext context) {
-    return ReaderStatusLabel(label: _label, fontSize: 14);
+    return ReaderStatusLabel(label: _label, fontSize: 12);
   }
 }

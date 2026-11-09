@@ -4,7 +4,7 @@ class ReaderStatusLabel extends StatelessWidget {
   const ReaderStatusLabel({
     required this.label,
     this.icon,
-    this.fontSize = 14,
+    this.fontSize = 12,
     super.key,
   });
 
@@ -14,24 +14,28 @@ class ReaderStatusLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (icon != null) ...<Widget>[
-            Stack(
-              alignment: Alignment.center,
-              children: <Widget>[
-                Icon(icon, size: fontSize + 4, color: Colors.black),
-                Icon(icon, size: fontSize + 1, color: Colors.white),
-              ],
-            ),
-            const SizedBox(width: 3),
-          ],
-          ReaderOutlinedText(label: label, fontSize: fontSize),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (icon != null) ...<Widget>[
+          Icon(
+            icon,
+            size: fontSize + 1,
+            color: Colors.white.withValues(alpha: 0.95),
+          ),
+          const SizedBox(width: 2),
         ],
-      ),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.95),
+            fontSize: fontSize,
+            fontWeight: FontWeight.w600,
+            height: 1.15,
+            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
     );
   }
 }
