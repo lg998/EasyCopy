@@ -2,17 +2,19 @@ name: Android Release
 
 on:
   push:
+    branches:
+      - "feat/reader-clock-default-on"
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag, for example v1.0.0"
-        required: true
+        required: false
         type: string
       prerelease:
         description: "Mark this GitHub Release as a prerelease"
-        required: true
+        required: false
         default: false
         type: boolean
 
@@ -55,14 +57,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            release_tag="${{ github.event.inputs.tag }}"
-            prerelease_flag="${{ github.event.inputs.prerelease }}"
-          else
-            release_tag="${{ github.ref_name }}"
-            prerelease_flag="false"
-          fi
-
           version_line="$(sed -nE 's/^version:[[:space:]]+(.+)$/\1/p' pubspec.yaml | head -n1)"
           if [[ -z "$version_line" ]]; then
             echo "Could not read version from pubspec.yaml." >&2
@@ -72,12 +66,19 @@ jobs:
           app_version="${version_line%%+*}"
           build_number="${version_line##*+}"
           expected_tag="v${app_version}"
-          notes_path=".github/release-notes/${release_tag}.md"
 
-          if [[ "$release_tag" != "$expected_tag" ]]; then
-            echo "Tag ${release_tag} does not match pubspec version ${app_version}. Expected ${expected_tag}." >&2
-            exit 1
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
+            release_tag="${{ github.event.inputs.tag }}"
+            prerelease_flag="${{ github.event.inputs.prerelease }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            release_tag="${{ github.ref_name }}"
+            prerelease_flag="false"
+          else
+            release_tag="$expected_tag"
+            prerelease_flag="false"
           fi
+
+          notes_path=".github/release-notes/${release_tag}.md"
 
           if [[ -f "$notes_path" ]]; then
             echo "has_custom_notes=true" >> "$GITHUB_OUTPUT"
@@ -99,7 +100,8 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
-      - name: Validate signing secrets
+      - name: Prepare signing configuration
+        id: signing
         shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -108,39 +110,26 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" && -n "${ANDROID_STORE_PASSWORD:-}" && -n "${ANDROID_KEY_ALIAS:-}" && -n "${ANDROID_KEY_PASSWORD:-}" ]]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          for name in \
-            ANDROID_KEYSTORE_BASE64 \
-            ANDROID_STORE_PASSWORD \
-            ANDROID_KEY_ALIAS \
-            ANDROID_KEY_PASSWORD
-          do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Missing required secret: $name" >&2
-              exit 1
-            fi
-          done
-
-      - name: Decode Android keystore
+      - name: Build signed APKs (arm64-v8a)
         shell: bash
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          set -euo pipefail
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
-
-      - name: Build signed APKs (armeabi-v7a, arm64-v8a, x86_64)
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/upload-keystore.jks
+          ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.has_keystore == 'true' && format('{0}/android/upload-keystore.jks', github.workspace) || '' }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          EASY_COPY_ALLOW_DEBUG_SIGNING: "true"
         run: |
           set -euo pipefail
           flutter build apk \
             --release \
-            --target-platform=android-arm,android-arm64,android-x64 \
+            --target-platform=android-arm64 \
             --split-per-abi \
             --tree-shake-icons
 
@@ -152,53 +141,19 @@ jobs:
           mkdir -p dist
 
           version="${{ steps.meta.outputs.app_version }}"
-          apk_outputs=(
-            "armeabi-v7a build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk"
-            "arm64-v8a build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
-            "x86_64 build/app/outputs/flutter-apk/app-x86_64-release.apk"
-          )
+          source="build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
 
-          for spec in "${apk_outputs[@]}"; do
-            abi="${spec%% *}"
-            source="${spec#* }"
+          if [[ ! -f "$source" ]]; then
+            echo "APK not found: $source" >&2
+            exit 1
+          fi
 
-            if [[ ! -f "$source" ]]; then
-              echo "APK not found: $source" >&2
-              exit 1
-            fi
-
-            cp "$source" "dist/EasyCopy-${version}-android-${abi}.apk"
-          done
+          cp "$source" "dist/EasyCopy-${version}-android-arm64-v8a.apk"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: EasyCopy-${{ steps.meta.outputs.release_tag }}-android-release
-          path: dist/*
+          name: EasyCopy-${{ steps.meta.outputs.release_tag }}-android-arm64-v8a
+          path: dist/*.apk
           if-no-files-found: error
 
-      - name: Create or update GitHub Release with custom notes
-        if: steps.meta.outputs.has_custom_notes == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          name: ${{ steps.meta.outputs.release_title }}
-          target_commitish: ${{ github.sha }}
-          body_path: ${{ steps.meta.outputs.release_notes_path }}
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          files: |
-            dist/*.apk
-          fail_on_unmatched_files: true
-
-      - name: Create or update GitHub Release
-        if: steps.meta.outputs.has_custom_notes != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          name: ${{ steps.meta.outputs.release_title }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          files: |
-            dist/*.apk
-          fail_on_unmatched_files: true
