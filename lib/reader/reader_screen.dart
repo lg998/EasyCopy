@@ -111,13 +111,19 @@ class ReaderScreen extends StatefulWidget {
   /// 加载当前漫画的目录数据供阅读器内章节选择面板使用。
   final Future<DetailPageData?> Function(ReaderPageData page)? onLoadCatalog;
 
+  static double _lastKnownTopSafeInset = 0;
+
+  static void recordTopSafeInset(double inset) {
+    if (inset > _lastKnownTopSafeInset) {
+      _lastKnownTopSafeInset = inset;
+    }
+  }
+
   @override
   State<ReaderScreen> createState() => ReaderScreenState();
 }
 
 class ReaderScreenState extends State<ReaderScreen> {
-  static double _cachedPortraitTopSafeInset = 0;
-
   late final ReaderController _controller;
   final ScrollController _settingsSheetScrollController = ScrollController();
   GlobalKey<ReaderBookState> _bookKey = GlobalKey<ReaderBookState>();
@@ -261,75 +267,50 @@ class ReaderScreenState extends State<ReaderScreen> {
     _controller.setSettingsSheetOpen(false);
   }
 
-  double _readerTopSafeInset(BuildContext context) {
-    final Size size = MediaQuery.sizeOf(context);
-    final bool isPortrait = size.height >= size.width;
-    final double viewTop = MediaQuery.viewPaddingOf(context).top;
-    if (isPortrait && viewTop > 0) {
-      _cachedPortraitTopSafeInset = math.max(
-        _cachedPortraitTopSafeInset,
-        viewTop,
-      );
-    }
-    if (!isPortrait) {
-      return viewTop;
-    }
-    if (viewTop > 0) {
-      return viewTop;
-    }
-    if (_cachedPortraitTopSafeInset > 0) {
-      return _cachedPortraitTopSafeInset;
-    }
-    if (_controller.platformBridge.isAndroidSupported) {
-      return 36;
-    }
-    return 0;
-  }
-
   Widget _buildReaderOverlay(
     BuildContext context,
     ReaderPageData page, {
     required double topSafeInset,
   }) {
+    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
     final ReaderPreferences preferences = _controller.preferences;
     final int? batteryLevel = _controller.batteryLevel;
     final bool hideTopStatus = _controller.isChapterControlsVisible;
+    final bool showBattery =
+        _controller.platformBridge.isAndroidSupported &&
+        preferences.showBattery;
     final List<Widget> statusItems = <Widget>[
       if (preferences.showProgress)
-        ReaderStatusLabel(
-          label: _readerPageCountLabel(page),
-          fontSize: 12,
-        ),
-      if (_controller.platformBridge.isAndroidSupported &&
-          preferences.showBattery)
+        ReaderStatusLabel(label: _readerPageCountLabel(page)),
+      if (showBattery)
         ReaderStatusLabel(
           label: batteryLevel == null ? '--%' : '$batteryLevel%',
-          icon: Icons.bolt_rounded,
-          fontSize: 12,
         ),
       if (preferences.showClock) const _ReaderClockLabel(),
     ];
+    final double rightInset =
+        !PlatformCapabilities.isDesktop &&
+            MediaQuery.orientationOf(context) == Orientation.landscape
+        ? math.max(viewPadding.right, 16)
+        : 0;
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
           if (statusItems.isNotEmpty && !hideTopStatus)
             Positioned(
-              top: topSafeInset + 6,
-              right: 6,
+              top: topSafeInset,
+              right: rightInset,
               child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0x7A000000),
-                  borderRadius: BorderRadius.circular(4),
-                ),
+                decoration: const BoxDecoration(color: Color(0x73000000)),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
+                    horizontal: 10,
                     vertical: 3,
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      for (int i = 0; i < statusItems.length; i += 1) ...<Widget>[
+                      for (int i = 0; i < statusItems.length; i++) ...<Widget>[
                         if (i > 0) const SizedBox(width: 8),
                         statusItems[i],
                       ],
@@ -1163,7 +1144,24 @@ class ReaderScreenState extends State<ReaderScreen> {
           );
         }
 
-        final double topSafeInset = _readerTopSafeInset(context);
+        final ui.FlutterView? flutterView = View.maybeOf(context);
+        final double viewTopInset = flutterView == null
+            ? 0
+            : flutterView.viewPadding.top / flutterView.devicePixelRatio;
+        final double currentTopInset = math.max(
+          MediaQuery.viewPaddingOf(context).top,
+          viewTopInset,
+        );
+        ReaderScreen.recordTopSafeInset(currentTopInset);
+        final bool isMobilePortrait =
+            !PlatformCapabilities.isDesktop &&
+            MediaQuery.orientationOf(context) == Orientation.portrait;
+        final double topSafeInset = isMobilePortrait
+            ? math.max(
+                currentTopInset,
+                math.max(ReaderScreen._lastKnownTopSafeInset, 34),
+              )
+            : currentTopInset;
 
         return AnimatedOpacity(
           opacity: widget.isExitTransitionActive ? 0 : 1,
@@ -1223,13 +1221,21 @@ class _ReaderClockLabelState extends State<_ReaderClockLabel> {
   void initState() {
     super.initState();
     _label = _formatNow();
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
+    _scheduleNextTick();
+  }
+
+  void _scheduleNextTick() {
+    _timer?.cancel();
+    final DateTime now = DateTime.now();
+    final int delayMs = (60 - now.second) * 1000 - now.millisecond;
+    _timer = Timer(Duration(milliseconds: math.max(100, delayMs)), () {
       if (!mounted) {
         return;
       }
       setState(() {
         _label = _formatNow();
       });
+      _scheduleNextTick();
     });
   }
 
@@ -1248,6 +1254,6 @@ class _ReaderClockLabelState extends State<_ReaderClockLabel> {
 
   @override
   Widget build(BuildContext context) {
-    return ReaderStatusLabel(label: _label, fontSize: 12);
+    return ReaderStatusLabel(label: _label);
   }
 }
