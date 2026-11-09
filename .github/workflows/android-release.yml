@@ -158,3 +158,16 @@ jobs:
           path: dist/*.apk
           if-no-files-found: error
 
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/*.apk
+          fail_on_unmatched_files: true
+
+
