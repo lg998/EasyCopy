@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chapter_navigation.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/reader_progress_store.dart';
@@ -17,6 +18,16 @@ class ChapterPathResolver {
   String lastReadKey(DetailPageData page) {
     return pathKey(
       _readerProgressStore.latestChapterPathKeyForCatalog(page.uri) ?? '',
+    );
+  }
+
+  String startReadingHref(
+    DetailPageData page, {
+    String? lastReadChapterPathKey,
+  }) {
+    return ChapterNavigation.startReadingHref(
+      page,
+      lastReadChapterPathKey: lastReadChapterPathKey ?? lastReadKey(page),
     );
   }
 

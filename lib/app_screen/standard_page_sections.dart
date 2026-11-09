@@ -449,6 +449,10 @@ extension _AppScreenPageSections on _AppScreenState {
     final Set<String> downloadedChapterKeys = _downloadedChapterKeys(page);
     final Set<String> visitedChapterKeys = _chapterKeys.visitedKeys(page);
     final String lastReadChapterPathKey = _chapterKeys.lastReadKey(page);
+    final String startReadingHref = _chapterKeys.startReadingHref(
+      page,
+      lastReadChapterPathKey: lastReadChapterPathKey,
+    );
     final List<DetailChapterTabData> chapterTabs = _detailChapters.tabs(page);
     final DetailChapterTabData? activeChapterTab = _detailChapters.activeTab(
       page,
@@ -465,8 +469,8 @@ extension _AppScreenPageSections on _AppScreenState {
       _hPaddedBox(
         DetailHeroCard(
           page: page,
-          onReadNow: page.startReadingHref.isNotEmpty
-              ? () => _openDetailChapter(page, page.startReadingHref)
+          onReadNow: startReadingHref.isNotEmpty
+              ? () => _openDetailChapter(page, startReadingHref)
               : null,
           onDownload: () => _showDetailDownloadPicker(page),
           onToggleCollection: page.comicId.trim().isEmpty

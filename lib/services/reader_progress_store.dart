@@ -177,7 +177,7 @@ class ReaderProgressStore {
   }
 
   String? latestChapterPathKeyForCatalog(String catalogHref) {
-    final String targetComicPathKey = _pathKey(catalogHref);
+    final String targetComicPathKey = _catalogPathKey(catalogHref);
     if (targetComicPathKey.isEmpty) {
       return null;
     }
@@ -192,7 +192,7 @@ class ReaderProgressStore {
 
   Set<String> visitedChapterPathKeysForCatalog(String catalogHref) {
     return Set<String>.unmodifiable(
-      _visitedChapters[_pathKey(catalogHref)] ?? const <String>{},
+      _visitedChapters[_catalogPathKey(catalogHref)] ?? const <String>{},
     );
   }
 
@@ -219,6 +219,7 @@ class ReaderProgressStore {
           existingEntry.chapterPathKey == chapterPathKey;
       final ReaderProgressEntry nextEntry = existingEntry != null
           ? existingEntry.copyWith(
+              comicPathKey: comicPathKey,
               chapterPathKey: chapterPathKey,
               position: isSameChapter
                   ? existingEntry.position
@@ -257,6 +258,7 @@ class ReaderProgressStore {
       );
       final ReaderProgressEntry nextEntry = existingEntry != null
           ? existingEntry.copyWith(
+              comicPathKey: comicPathKey,
               chapterPathKey: chapterPathKey,
               position: normalizedPosition,
               updatedAt: now,
@@ -273,7 +275,7 @@ class ReaderProgressStore {
 
   Future<void> remove(String catalogHref) async {
     await ensureInitialized();
-    final String comicPathKey = _pathKey(catalogHref);
+    final String comicPathKey = _catalogPathKey(catalogHref);
     if (comicPathKey.isEmpty) {
       return;
     }
@@ -288,7 +290,8 @@ class ReaderProgressStore {
         }
       });
       _entries.removeWhere(
-        (ReaderProgressEntry entry) => entry.comicPathKey == comicPathKey,
+        (ReaderProgressEntry entry) =>
+            _catalogPathKey(entry.comicPathKey) == comicPathKey,
       );
       _visitedChapters.remove(comicPathKey);
       chapterRevision.value += 1;
@@ -317,13 +320,14 @@ class ReaderProgressStore {
   }
 
   ReaderProgressEntry? _entryForComicPathKey(String comicPathKey) {
-    final String normalizedComicPathKey = comicPathKey.trim();
+    final String normalizedComicPathKey = _catalogPathKey(comicPathKey);
     if (normalizedComicPathKey.isEmpty) {
       return null;
     }
     return _entries.cast<ReaderProgressEntry?>().firstWhere(
       (ReaderProgressEntry? entry) =>
-          entry?.comicPathKey == normalizedComicPathKey,
+          entry != null &&
+          _catalogPathKey(entry.comicPathKey) == normalizedComicPathKey,
       orElse: () => null,
     );
   }
@@ -364,8 +368,12 @@ class ReaderProgressStore {
     );
     _visitedChapters.clear();
     for (final Map<String, Object?> row in visitedRows) {
+      final String comicKey = _catalogPathKey(row['comic_path_key']! as String);
+      if (comicKey.isEmpty) {
+        continue;
+      }
       _visitedChapters
-          .putIfAbsent(row['comic_path_key']! as String, () => <String>{})
+          .putIfAbsent(comicKey, () => <String>{})
           .add(row['chapter_path_key']! as String);
     }
   }
@@ -396,21 +404,37 @@ class ReaderProgressStore {
     return _pathKeyFromValue(href);
   }
 
+  String _catalogPathKey(String href) {
+    String rawPathKey = _pathKey(href);
+    if (rawPathKey.isEmpty) {
+      return '';
+    }
+    final int chapterIndex = rawPathKey.indexOf('/chapter/');
+    if (chapterIndex > 0) {
+      rawPathKey = rawPathKey.substring(0, chapterIndex);
+    }
+    if (rawPathKey.length > 1 && rawPathKey.endsWith('/')) {
+      rawPathKey = rawPathKey.replaceAll(RegExp(r'/+$'), '');
+    }
+    return rawPathKey;
+  }
+
   String _comicPathKey({
     required String catalogHref,
     required String chapterHref,
   }) {
-    final String catalogPathKey = _pathKey(catalogHref);
+    final String catalogPathKey = _catalogPathKey(catalogHref);
     if (catalogPathKey.isNotEmpty) {
       return catalogPathKey;
     }
-    return _pathKey(chapterHref);
+    return _catalogPathKey(chapterHref);
   }
 
   void _replaceEntry(ReaderProgressEntry nextEntry) {
+    final String targetKey = _catalogPathKey(nextEntry.comicPathKey);
     final int existingIndex = _entries.indexWhere(
       (ReaderProgressEntry entry) =>
-          entry.comicPathKey == nextEntry.comicPathKey,
+          _catalogPathKey(entry.comicPathKey) == targetKey,
     );
     if (existingIndex >= 0) {
       _entries[existingIndex] = nextEntry;
